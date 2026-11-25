@@ -24,7 +24,7 @@ from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
 PI_FILE = TESTS_DIR / "test_enforce_pi_authorization_before_prod_deploy.py"
-LEAKY_SELECTION = "degraded or three_states or identity_failure or mint"
+LEAKY_SELECTION = "import_failure or offline_signature"
 
 
 def test_pi_guard_tests_leave_nothing_in_the_temp_dir(tmp_path):

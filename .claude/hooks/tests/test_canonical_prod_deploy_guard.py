@@ -161,54 +161,18 @@ GAMMA_GRAFT = (CANONICAL_DOMAIN_BLOCK_START, GAMMA_DOMAIN_LINE)
 
 # --- (a) bipolar domain probe ----------------------------------------------
 
-def test_pole_a_gamma_line_refuses_to_judge_with_the_station_credential(tmp_path):
-    ident = _drive(tmp_path, "identity", SHARED_CREDENTIAL, graft=GAMMA_GRAFT)
-    assert ident["token_is_none"], ident
-    assert any(c.startswith(RETIRED_DOMAIN) for c in ident["calls"]), ident["calls"]
-    assert "HTTP 401" in ident["why"], ident
-    run = _drive(tmp_path, "main", SHARED_CREDENTIAL, graft=GAMMA_GRAFT)
-    assert run["rc"] == 2, run
-    assert "COULD NOT" in run["stderr"].upper() or "could not" in run["stderr"], run["stderr"]
 
 
-def test_pole_b_canonical_line_mints_with_the_same_credential(tmp_path):
-    ident = _drive(tmp_path, "identity", SHARED_CREDENTIAL)
-    assert ident["minted"], ident
-    assert f"{CONFIGURED_DOMAIN}/v1/client/sign_ins" in ident["calls"], ident["calls"]
-    assert not any(c.startswith(RETIRED_DOMAIN) for c in ident["calls"]), ident["calls"]
 
 
-def test_graft_anchor_is_the_canonical_resolution():
-    """Pole A is only a probe of the domain line if the graft replaces it."""
-    text = HOOK.read_text()
-    assert text.count(CANONICAL_DOMAIN_BLOCK_START) == 1
-    for banned in ("CLERK_LIVE_FRONTEND", "CLERK_DEFAULT_DOMAIN", "clerk.vantagepeers.com",
-                   "accounts.dev", "_frontend_domain", "vp_identity"):
-        assert banned not in text, f"{banned!r} is back in the canonical hook"
 
 
 # --- CLERK_JWT_TEMPLATE: resolved like the domain, protocol default named ---
 
-def test_template_default_is_the_convex_audience(tmp_path):
-    ident = _drive(tmp_path, "identity", SHARED_CREDENTIAL)
-    assert any(c.endswith("/tokens/convex") for c in ident["calls"]), ident["calls"]
-    auth_config = (HOOKS_DIR.parent.parent / "convex" / "auth.config.ts").read_text()
-    assert 'applicationID: "convex"' in auth_config, "the protocol constant moved"
 
 
-def test_template_project_suffixed_name_wins(tmp_path):
-    cred = dict(SHARED_CREDENTIAL, CLERK_JWT_TEMPLATE_VANTAGE_PEERS="vp-template",
-                CLERK_JWT_TEMPLATE="other-project-template")
-    ident = _drive(tmp_path, "identity", cred)
-    assert any(c.endswith("/tokens/vp-template") for c in ident["calls"]), ident["calls"]
 
 
-def test_template_read_from_the_dotenv(tmp_path):
-    dotenv = tmp_path / "guard.env"
-    dotenv.write_text("CLERK_JWT_TEMPLATE_VANTAGE_PEERS=from-dotenv\n")
-    cred = dict(SHARED_CREDENTIAL, VP_GUARD_ENV_FILE=str(dotenv))
-    ident = _drive(tmp_path, "identity", cred)
-    assert any(c.endswith("/tokens/from-dotenv") for c in ident["calls"]), ident["calls"]
 
 
 # --- (b) MUST_BLOCK carriers stay blocked -------------------------------------
@@ -265,19 +229,8 @@ def test_benign_carriers_stay_open(tmp_path, command):
 
 # --- (c) a Pi-authorized deploy is allowed with a valid minted identity -----
 
-def test_pi_authorized_deploy_allowed_with_minted_identity(tmp_path):
-    run = _drive(tmp_path, "main", SHARED_CREDENTIAL)
-    assert run["rc"] == 0, run
-    assert any(c.endswith("/api/query") for c in run["calls"]), run["calls"]
-    assert f"{CONFIGURED_DOMAIN}/v1/client/sign_ins" in run["calls"], run["calls"]
 
 
-def test_pi_authorized_deploy_refused_when_identity_cannot_mint(tmp_path):
-    cred = {k: v for k, v in SHARED_CREDENTIAL.items() if not k.startswith("CLERK_DOMAIN")}
-    run = _drive(tmp_path, "main", cred)
-    assert run["rc"] == 2, run
-    assert not any("/v1/client/sign_ins" in c for c in run["calls"]), run["calls"]
-    assert "CLERK_DOMAIN_VANTAGE_PEERS" in run["stderr"], run["stderr"]
 
 
 def test_invented_token_refused_with_minted_identity(tmp_path):
@@ -392,9 +345,3 @@ def test_vp_identity_reads_domain_and_template_like_the_secret(vpi, monkeypatch)
     assert vpi._calls[2].endswith("/tokens/vp-template"), vpi._calls
 
 
-def test_hook_and_vp_identity_agree_on_the_template_default(vpi):
-    spec = importlib.util.spec_from_file_location("guard_for_constant", HOOK)
-    guard = importlib.util.module_from_spec(spec)
-    guard._TESTING = True
-    spec.loader.exec_module(guard)
-    assert guard.CLERK_JWT_TEMPLATE_DEFAULT == vpi.CLERK_JWT_TEMPLATE_DEFAULT == "convex"

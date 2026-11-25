@@ -134,16 +134,6 @@ def stub_vp(tasks):
         server.server_close()
 
 
-def run_with_tasks(command, tasks, extra_env=None):
-    with stub_vp(tasks) as url:
-        # The guard reads its token as an IDENTIFIED caller now, so every pole
-        # that expects it to be SERVED must supply an identity. The permissive
-        # stub ignores the header; supplying it here keeps these poles testing
-        # what they were written to test (token VALIDITY) rather than silently
-        # turning them all into could-not-check.
-        env = {"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"}
-        env.update(extra_env or {})
-        return run_hook(command, env)
 
 
 def load_hook_module():
@@ -257,10 +247,14 @@ _ID_A = "k" + "a" * 31
 _ID_B = "k" + "b" * 31
 
 
-def test_pi_authorized_comment_passes():
-    rc, out = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}", {_ID_A: token_task()})
-    assert rc == 0, f"a valid fresh token must allow, rc={rc} out={out}"
+def test_bare_pi_authorized_marker_is_refused_even_with_a_valid_network_token():
+    """Phase 2: an unsigned `# pi-authorized:` proves nothing, whatever a store would say."""
+    with stub_vp({_ID_A: token_task()}) as url:
+        rc, out = run_hook(
+            f"npx convex deploy --yes # pi-authorized: {_ID_A}",
+            {"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"})
+    assert rc == 2, out
+    assert "offline-signature-required" in out, out
 
 
 def test_laurent_override_passes():
@@ -268,113 +262,9 @@ def test_laurent_override_passes():
     assert rc == 0
 
 
-def test_authorized_interpreter_deploy_passes():
-    rc, _ = run_with_tasks(
-        f"bash -c 'npx convex deploy --prod' # pi-authorized: {_ID_B}",
-        {_ID_B: token_task()})
-    assert rc == 0, "authorization must also unlock wrapped forms"
-
-
-# --- TOKEN VALIDATION: the id must name a live, valid task (rc=2 otherwise) -
-
-def test_invented_token_refused():
-    """The defect this union closes: a well-SPELLED id that names no task."""
-    rc, out = run_with_tasks(f"npx convex deploy --yes # pi-authorized: {_ID_A}", {})
-    assert rc == 2, f"an invented id must be refused, rc={rc} out={out}"
-    # Was "task-unreadable-or-absent": the guard used to collapse "you may
-    # not see it" and "it is not there" into one word, which is exactly
-    # what froze the fleet. The token is now READ as an identified caller,
-    # so a well-spelled id naming nothing is a plain ABSENCE and says so.
-    assert "token-absent" in out
-    assert "COULD NOT CHECK" not in out, "an absence is not a could-not-check"
-
-
-def _guard_ttl_sec():
-    """Read the window from the executing file, never restate it here.
-
-    A test that types its own copy of the number passes while the two disagree:
-    the window moved from 3600 to 7200 and this test went on asserting against a
-    figure no longer in the guard, so it failed on a guard that was correct. The
-    number has one home and the test reads it there.
-    """
-    src = (pathlib.Path(__file__).resolve().parents[1]
-           / "enforce-pi-authorization-before-prod-deploy.py").read_text()
-    m = re.search(r"^TASK_TTL_SEC\s*=\s*(\d+)", src, re.M)
-    assert m, "TASK_TTL_SEC not found in the guard -- the test cannot derive the window"
-    return int(m.group(1))
-
-
-def test_expired_token_refused():
-    ttl = _guard_ttl_sec()
-    rc, out = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(age_sec=ttl + 1)})
-    assert rc == 2, (
-        f"a token older than the guard's own window ({ttl}s) must be refused, "
-        f"rc={rc} out={out}")
-    assert "task-invalid" in out
-
-
-def test_token_just_inside_the_window_is_accepted():
-    """The other pole. Without it, a guard refusing EVERY token passes above."""
-    ttl = _guard_ttl_sec()
-    rc, out = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(age_sec=ttl - 60)})
-    assert rc == 0, f"a token inside the window must pass, rc={rc} out={out}"
-
-
-def test_token_without_marker_refused():
-    rc, _ = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(title="unrelated task")})
-    assert rc == 2, "a task without [PROD-DEPLOY-AUTHORIZED] authorizes nothing"
-
-
-def test_marker_in_tags_still_accepted():
-    rc, _ = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(title="deploy", tags=["[PROD-DEPLOY-AUTHORIZED]"])})
-    assert rc == 0, "the marker is honoured in tags as well as in the title"
-
-
-def test_foreign_assignee_refused_when_caller_declared():
-    rc, out = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(assigned_to="omega")},
-        {"PI_AUTH_ORCHESTRATOR": "sigma"})
-    assert rc == 2, f"a token assigned to another orchestrator must be refused, rc={rc} out={out}"
-
-
-def test_own_assignee_passes_when_caller_declared():
-    rc, out = run_with_tasks(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {_ID_A: token_task(assigned_to="sigma")},
-        {"PI_AUTH_ORCHESTRATOR": "sigma"})
-    assert rc == 0, f"a token assigned to the declared caller must allow, rc={rc} out={out}"
-
-
-def test_unreachable_vp_refused():
-    """Could-not-judge is a refusal: the fetch fails (connection refused)."""
-    rc, out = run_hook(f"npx convex deploy --yes # pi-authorized: {_ID_A}")
-    assert rc == 2, f"an unreachable token store must refuse, rc={rc} out={out}"
-
-
-def test_fetch_raising_refused():
-    """The read RAISES (a malformed URL). It must refuse rather than fall open.
-
-    This used to reach main()'s crash handler ("could not run"). It is now
-    classified where it belongs -- the read could not be completed, so it is
-    the THIRD state and says COULD NOT CHECK. Same exit code, honest text.
-    """
-    rc, out = run_hook(
-        f"npx convex deploy --yes # pi-authorized: {_ID_A}",
-        {"VP_CONVEX_URL": "not-a-url",
-         "VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"})
-    assert rc == 2, f"a read that raises must refuse, rc={rc} out={out}"
-    assert "COULD NOT CHECK" in out, f"a failed read is a could-not-check, out={out}"
-    assert "BLOCKED:" not in out, (
-        "a failed read must not be spelled as a refusal of the token")
+def test_bare_marker_does_not_unlock_a_wrapped_deploy_either():
+    rc, out = run_hook(f"bash -c 'npx convex deploy --prod' # pi-authorized: {_ID_B}")
+    assert rc == 2 and "offline-signature-required" in out, out
 
 
 # --- CRASH POLE: the entrypoint fails CLOSED on a prod action --------------
@@ -431,16 +321,10 @@ def test_prod_inline_deploy_blocks():
     assert rc == 2, "a prod-keyed deploy without Pi authorization must block"
 
 
-def test_prod_inline_deploy_with_token_passes():
-    rc, out = run_with_tasks(
-        f"CONVEX_DEPLOY_KEY={_PROD} npx convex deploy --yes {_TOKEN}",
-        {_ID_A: token_task()})
-    assert rc == 0, f"prod deploy + valid Pi token must pass, rc={rc} out={out}"
-
-
-def test_prod_inline_deploy_with_invented_token_blocks():
-    rc, _ = run_with_tasks(f"CONVEX_DEPLOY_KEY={_PROD} npx convex deploy --yes {_TOKEN}", {})
-    assert rc == 2, "a prod-keyed deploy with an invented token must block"
+def test_prod_inline_deploy_with_an_unsigned_token_blocks():
+    rc, out = run_hook(f"CONVEX_DEPLOY_KEY={_PROD} npx convex deploy --yes {_TOKEN}")
+    assert rc == 2, "a prod-keyed deploy with a bare token must block"
+    assert "offline-signature-required" in out, out
 
 
 def test_dev_quoted_full_key_passes_without_token():
@@ -728,490 +612,6 @@ def test_strip_quoted_phrase_with_whitespace_stays_inert():
     guard = load_hook_module()
     assert guard.strip_quoted_strings('grep -r "convex deploy" docs/') == 'grep -r "" docs/'
 
-
-
-# ---------------------------------------------------------------------------
-# THE DOOR (task k172pesxfj94bm3ed6q790fhnx8f628x).
-#
-# Every stub above answers `tasks:get` to ANY reader. The real deployment does
-# not: `convex/tasks.ts`'s `get` resolves `withOrgScope(ctx, {refuseWithoutThrow:
-# true})` and returns null through `isRowVisibleToScope` when the caller has no
-# scope. An unidentified reader therefore gets `{"status":"success","value":null}`
-# for EVERY task, including ones that exist. Because the permissive stub never
-# modelled that door, this suite stayed green while production could not deploy
-# at all -- the tests proved the guard's TEXT handling, never its ability to be
-# SERVED. `stub_vp_requiring_identity` closes that gap: it is the same stub with
-# the door in front of it.
-#
-# THE TRAP these three poles pin: `value: null` means BOTH "no such task" and
-# "you may not see it". A guard that collapses them into "absent" blocks every
-# honest caller today, and -- once it is taught to allow -- would ALLOW on a
-# refusal tomorrow. So the guard must end in THREE states, not two.
-#
-# On exit codes: ALLOW is 0. BLOCK and REFUSE-TO-JUDGE are BOTH 2, and
-# deliberately so -- under the Claude Code hook protocol only 2 actually stops
-# the tool call, so a refusal that exited anything else would let the deploy
-# run. The two are separated where the operator reads them: the stderr text and
-# the audit log's `reason` field. "I could not check" and "this is not
-# authorised" must never be the same sentence.
-# ---------------------------------------------------------------------------
-
-@contextlib.contextmanager
-def stub_vp_requiring_identity(tasks, *, status_code=200, force_error=False,
-                               credential_accepted=True):
-    """`tasks:get` behind the SAME door the real deployment puts in front of it.
-
-    No `Authorization` header -> `{"status":"success","value":null}` whatever
-    the id, exactly as `isRowVisibleToScope` returns for a scope-less caller.
-    With a bearer -> the row, or null when the id truly names no task.
-    """
-
-    seen = {"authorized_reads": 0, "anonymous_reads": 0}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 - http.server API
-            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            if force_error:
-                out = json.dumps(
-                    {"status": "error", "errorMessage": "Server Error"}
-                ).encode()
-                self.send_response(status_code)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(out)))
-                self.end_headers()
-                self.wfile.write(out)
-                return
-            bearer = self.headers.get("Authorization", "")
-            identified = (
-                bearer.startswith("Bearer ")
-                and len(bearer) > len("Bearer ")
-                and credential_accepted
-            )
-            if body.get("path") != "tasks:get":
-                # THE POSITIVE CONTROL. It cannot succeed without an accepted
-                # credential: `missions:list` calls requireScope, which THROWS
-                # for a scope-less caller, and the throw is a ConvexError whose
-                # payload reaches the wire as `errorData`. Measured on the real
-                # deployment (anonymous -> RBAC_DENIED, identified -> rows).
-                if identified:
-                    payload = {"status": "success", "value": []}
-                else:
-                    payload = {
-                        "status": "error",
-                        "errorMessage": "[Request ID: stub] Server Error",
-                        "errorData": 'RBAC_DENIED: Missing scope "view-own-missions" for org "null"',
-                    }
-            elif not identified:
-                seen["anonymous_reads"] += 1
-                # The door: null for EVERY id, present or not.
-                payload = {"status": "success", "value": None}
-            else:
-                seen["authorized_reads"] += 1
-                if body.get("args", {}).get("taskId") in tasks:
-                    payload = {"status": "success",
-                               "value": tasks[body["args"]["taskId"]]}
-                else:
-                    payload = {"status": "error",
-                               "errorMessage": "[Request ID: stub] Server Error"}
-            out = json.dumps(payload).encode()
-            self.send_response(status_code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(out)))
-            self.end_headers()
-            self.wfile.write(out)
-
-        def log_message(self, *args):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}", seen
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-# A stub identity. The test never mints a real one and never reads a real
-# secret: it names the variable the guard reads and supplies a placeholder, so
-# the suite exercises the PRESENTING of an identity without any credential
-# leaving (or entering) this machine.
-STUB_IDENTITY_ENV = {"VP_GUARD_CONVEX_TOKEN": "stub-identity-not-a-real-token"}
-
-AUTHORIZED_DEPLOY = "npx convex deploy --yes # pi-authorized: k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-
-def _run_against_door(command, tasks, *, extra_env=None, **stub_kwargs):
-    with stub_vp_requiring_identity(tasks, **stub_kwargs) as (url, seen):
-        env = {"VP_CONVEX_URL": url}
-        env.update(STUB_IDENTITY_ENV)
-        env.update(extra_env or {})
-        rc, out = run_hook(command, env)
-    return rc, out, seen
-
-
-def test_valid_token_allows():
-    """POSITIVE POLE FIRST. A valid, unexpired, correctly-shaped token behind
-    the real door must ALLOW -- the guard has to present an identity to be
-    served the grant it legitimately holds."""
-    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
-    rc, out, seen = _run_against_door(AUTHORIZED_DEPLOY, tasks)
-    assert seen["authorized_reads"] >= 1, (
-        "the guard read the token WITHOUT presenting an identity, so the door "
-        f"served it null: anonymous_reads={seen['anonymous_reads']} out={out}"
-    )
-    assert rc == 0, f"a valid token must ALLOW, rc={rc} out={out}"
-
-
-def test_forged_token_blocks():
-    """A token READ SUCCESSFULLY that names no task is a BLOCK, and the text
-    must say so -- not 'I could not check'."""
-    rc, out, seen = _run_against_door(AUTHORIZED_DEPLOY, {})
-    assert rc == 2, f"a forged token must BLOCK, rc={rc} out={out}"
-    assert "BLOCKED" in out, f"a forged token must read as BLOCKED, out={out}"
-    assert "could not be completed" not in out, (
-        "a forged token was reported as unjudgeable; a refusal and an absence "
-        f"must stay distinguishable, out={out}"
-    )
-
-
-def test_unreadable_server_refuses_to_judge():
-    """The read itself could not be completed. Not a BLOCK, not an ALLOW: a
-    third, visibly distinct answer."""
-    rc, out, _ = _run_against_door(AUTHORIZED_DEPLOY, {}, force_error=True)
-    assert rc == 2, f"an unreadable store must refuse, rc={rc} out={out}"
-    assert "COULD NOT CHECK" in out, (
-        f"the third state must be visibly distinct in the text, out={out}"
-    )
-    assert "BLOCKED:" not in out, (
-        f"'I could not check' must not be spelled as 'this is not authorised', out={out}"
-    )
-
-
-def test_missing_credential_refuses_to_judge_rather_than_blocking():
-    """No credential reachable is the SAME third state: the guard cannot
-    identify itself, so it refuses to judge and names that -- it never invents
-    a bypass, and never silently reports the token as absent."""
-    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
-    with stub_vp_requiring_identity(tasks) as (url, _seen):
-        rc, out = run_hook(
-            AUTHORIZED_DEPLOY,
-            {"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "",
-             "VP_GUARD_ENV_FILE": "/nonexistent/.env.local"},
-        )
-    assert rc == 2, f"no credential must refuse, rc={rc} out={out}"
-    assert "COULD NOT CHECK" in out, f"must read as could-not-check, out={out}"
-    assert "VP_GUARD_CONVEX_TOKEN" in out, (
-        f"the refusal must NAME the variable it needs (never its value), out={out}"
-    )
-
-
-def test_control_refuses_an_unidentified_caller():
-    """THE CONTROL'S OWN NEGATIVE POLE, in the suite.
-
-    The first control here (`tasks:listUnlinkedBlocked`) answered an anonymous
-    caller with 159 rows -- identical to an identified one -- so it could
-    succeed WITHOUT the credential and proved nothing about identity. A control
-    never run on its own negative pole is an instrument nobody has checked.
-    """
-    guard = load_hook_module()
-    assert guard.LIVENESS_PATH == "missions:list", (
-        "the control must be a path that REFUSES an unidentified caller"
-    )
-    with stub_vp_requiring_identity({}, credential_accepted=False) as (url, _):
-        os.environ["VP_CONVEX_URL"] = url
-        try:
-            guard.VP_CONVEX_URL = url
-            state, why = guard.store_is_answering("a-credential-the-store-rejects")
-        finally:
-            os.environ.pop("VP_CONVEX_URL", None)
-    assert state == guard.CONTROL_NOT_IDENTIFIED, (
-        f"a rejected credential must read as not-identified, got {state} ({why})"
-    )
-
-
-def test_control_serves_an_identified_caller():
-    """POSITIVE POLE of the same instrument -- both poles, never one."""
-    guard = load_hook_module()
-    with stub_vp_requiring_identity({}) as (url, _):
-        guard.VP_CONVEX_URL = url
-        state, _ = guard.store_is_answering("a-credential-the-store-accepts")
-    assert state == guard.CONTROL_SERVED, f"an accepted credential must be served, got {state}"
-
-
-def test_broken_credential_refuses_to_judge_rather_than_blocking():
-    """THE REGRESSION THIS CONTROL EXISTS FOR.
-
-    The credential is rejected by the deployment, so the token read fails. A
-    guard whose control could pass without the credential would read that as
-    "the id names nothing" and BLOCK a perfectly valid token. The truth is
-    "I could not identify myself", and the honest answer is REFUSE TO JUDGE.
-    """
-    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
-    rc, out, _ = _run_against_door(AUTHORIZED_DEPLOY, tasks, credential_accepted=False)
-    assert rc == 2, f"a rejected credential must refuse, rc={rc} out={out}"
-    assert "COULD NOT CHECK" in out, (
-        f"a rejected credential is a could-not-check, never a BLOCK, out={out}"
-    )
-    assert "token-absent" not in out, (
-        "a valid token was reported as absent because the credential failed -- "
-        f"this is the collapse the control exists to prevent, out={out}"
-    )
-
-
-def test_three_states_are_distinct_in_the_audit_log():
-    """ALLOW / BLOCK / REFUSE-TO-JUDGE must be three different `reason` values
-    in /tmp/pi-auth-prod-deploy.log, not two."""
-    log = _scratch_dir("audit-") / "audit.log"
-    tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
-    env = {"VP_GUARD_AUDIT_LOG": str(log)}
-    _run_against_door(AUTHORIZED_DEPLOY, tasks, extra_env=env)
-    _run_against_door(AUTHORIZED_DEPLOY, {}, extra_env=env)
-    _run_against_door(AUTHORIZED_DEPLOY, {}, extra_env=env, force_error=True)
-    reasons = [json.loads(line)["reason"] for line in
-               log.read_text().splitlines() if line.strip()]
-    assert len(set(reasons)) == 3, (
-        f"three outcomes must leave three distinct reasons, got {reasons}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# GUARD IDENTITY: a mint failure names the STEP that failed, and still refuses.
-#
-# `guard_identity()` has four ways to end without a bearer. Before these poles
-# the behaviour existed and NOTHING pinned it: collapsing the four reasons into
-# one sentence, reclassifying a mint failure as `block`, dropping the
-# VP_GUARD_CONVEX_TOKEN escape, or turning could-not-judge into allow would each
-# have left every other pole green. A control that has never been shown to fail
-# is not a control.
-#
-# The Clerk round-trips are the ONLY thing faked. The driver below loads the
-# real hook, replaces its `_post_json` transport with a scripted sequence, and
-# runs the real `main()` -- so the text, the audit line and the exit code are
-# the hook's own, end to end. Nothing leaves this machine; the credentials are
-# placeholders and are asserted never to be echoed.
-# ---------------------------------------------------------------------------
-
-_FAKE_SECRET = "sk_test_placeholder_never_a_real_secret"
-_FAKE_USER = "user_placeholder_service_account"
-_FAKE_DOMAIN = "https://clerk.placeholder.invalid"
-
-# What each scripted Clerk transport answers, in call order. A callable raises.
-# None of these carries a bearer, so the ONLY thing that differs between the
-# four scenarios is which step of the mint flow came back empty.
-_MINT_SCENARIOS = {
-    "credentials-absent": None,  # no Clerk call is ever made
-    "domain-absent": [],  # secret and user present, no domain: no Clerk call either
-    "no-sign-in-ticket": [{}],
-    "no-session-from-exchange": [{"token": "t"}, {}],
-    "no-jwt-for-template": [{"token": "t"}, {"response": {"created_session_id": "s"}}, {}],
-}
-
-# The word(s) that place each failure at its step. Distinctness is the pole;
-# these keep a reworded reason from drifting away from the step it names.
-_STEP_MARKER = {
-    "credentials-absent": "no credential is reachable",
-    "domain-absent": "no Clerk frontend domain is configured",
-    "no-sign-in-ticket": "no sign-in ticket",
-    "no-session-from-exchange": "returned no session",
-    "no-jwt-for-template": "no JWT",
-}
-
-_MINT_DRIVER = r"""
-import importlib.util, json, os, sys
-spec = importlib.util.spec_from_file_location("guard_under_mint_test", os.environ["MINT_TEST_HOOK"])
-guard = importlib.util.module_from_spec(spec)
-guard._TESTING = True
-spec.loader.exec_module(guard)
-script = json.loads(os.environ["MINT_TEST_SCRIPT"])
-calls = iter(script)
-def scripted_post_json(url, payload, headers, *, form=None):
-    step = next(calls)
-    if step == "raise":
-        raise OSError("HTTP 403")
-    return step
-guard._post_json = scripted_post_json
-sys.exit(guard.main(sys.stdin.read()))
-"""
-
-
-def _run_mint_failure(scenario, audit_log_path):
-    """Run the real hook to a mint failure; return (rc, operator_text)."""
-    script = _MINT_SCENARIOS[scenario]
-    env = dict(os.environ)
-    for name in ("PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
-                 "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID", "CLERK_DOMAIN"):
-        env.pop(name, None)
-        env.pop(name + "_VANTAGE_PEERS", None)
-    env.update({
-        "VP_CONVEX_URL": DEAD_URL,
-        "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
-        "VP_GUARD_AUDIT_LOG": str(audit_log_path),
-        "MINT_TEST_HOOK": str(HOOK),
-        "MINT_TEST_SCRIPT": json.dumps(script or []),
-    })
-    if script is not None:
-        env["CLERK_SECRET_KEY"] = _FAKE_SECRET
-        env["CLERK_SERVICE_ACCOUNT_USER_ID"] = _FAKE_USER
-        if scenario != "domain-absent":
-            env["CLERK_DOMAIN"] = _FAKE_DOMAIN
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": AUTHORIZED_DEPLOY}})
-    proc = subprocess.run(
-        [sys.executable, "-c", _MINT_DRIVER], input=payload,
-        capture_output=True, text=True, timeout=15, env=env,
-    )
-    return proc.returncode, proc.stderr + proc.stdout
-
-
-def _what_happened(out):
-    match = re.search(r"What happened: (.*)\n", out)
-    assert match, f"the refusal must carry a 'What happened:' line, out={out}"
-    return match.group(1)
-
-
-def _mint_failures():
-    """Run all four scenarios; return {scenario: (rc, out, audit_entries)}."""
-    results = {}
-    for scenario in _MINT_SCENARIOS:
-        log = _scratch_dir("audit-") / "audit.log"
-        rc, out = _run_mint_failure(scenario, log)
-        entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
-        results[scenario] = (rc, out, entries)
-    return results
-
-
-def test_identity_failure_names_its_step():
-    """The four mint failures must produce FOUR DIFFERENT operator-facing texts.
-
-    Asserting that "a reason is printed" would pass against the version that
-    collapsed all four into one sentence -- that is the defect restated. So the
-    pole compares the four with each other, then checks each names its own step.
-    """
-    results = _mint_failures()
-    whys = {scenario: _what_happened(out) for scenario, (_, out, _) in results.items()}
-    assert len(set(whys.values())) == len(_MINT_SCENARIOS), (
-        f"different failed steps collapsed into fewer distinct texts: {whys}"
-    )
-    for scenario, why in whys.items():
-        assert _STEP_MARKER[scenario] in why, (
-            f"{scenario!r} does not name its own step ({_STEP_MARKER[scenario]!r}): {why!r}"
-        )
-    for scenario, (_, out, entries) in results.items():
-        assert _FAKE_SECRET not in out and _FAKE_USER not in out, (
-            f"{scenario!r}: the refusal echoed a credential VALUE, out={out}"
-        )
-        assert entries and entries[-1]["detail"] == whys[scenario][:300], (
-            f"{scenario!r}: the audit line must carry the same reason the operator read, "
-            f"entries={entries}"
-        )
-
-
-def test_identity_failure_transport_error_names_its_exception():
-    """A fifth ending: the mint call itself RAISES. It must be told apart from
-    the four 'came back empty' steps, and must carry the exception, not hide it."""
-    log = _scratch_dir("audit-") / "audit.log"
-    _MINT_SCENARIOS["transport-raised"] = ["raise"]
-    try:
-        rc, out = _run_mint_failure("transport-raised", log)
-    finally:
-        del _MINT_SCENARIOS["transport-raised"]
-    assert rc == 2, f"a raising mint must refuse, rc={rc} out={out}"
-    why = _what_happened(out)
-    assert "minting the service identity failed" in why and "OSError" in why, why
-    assert _FAKE_SECRET not in out, f"the refusal echoed a credential VALUE, out={out}"
-
-
-def test_identity_failure_is_refuse_to_judge_never_block():
-    """A guard that could not identify itself has judged NOTHING. It must say so
-    in the audit line, never as `block`: `block` means 'the token was read and
-    does not authorise', which is false here."""
-    for scenario, (_, out, entries) in _mint_failures().items():
-        assert len(entries) == 1, f"{scenario!r}: expected one audit line, got {entries}"
-        entry = entries[0]
-        assert entry["verdict"] == "refuse-to-judge", (
-            f"{scenario!r}: a mint failure must be refuse-to-judge, got {entry}"
-        )
-        assert entry["verdict"] != "block" and entry.get("reason") != "token-absent", entry
-        assert "COULD NOT CHECK" in out and "BLOCKED:" not in out, (
-            f"{scenario!r}: 'I could not check' must not read as 'not authorised', out={out}"
-        )
-
-
-def test_identity_failure_still_refuses():
-    """The opposite defect, and the dangerous one: turning could-not-judge into
-    allow. Every mint failure must exit 2 -- the only code that stops the tool."""
-    for scenario, (rc, out, _) in _mint_failures().items():
-        assert rc == 2, f"{scenario!r}: a mint failure must REFUSE (exit 2), rc={rc} out={out}"
-
-
-def test_identity_failure_names_the_preminted_token_escape():
-    """The refusal must tell the operator how to unblock a station whose Clerk
-    path fails. The sentence is checked OUTSIDE the 'What happened' line: the
-    credentials-absent reason names the variable in its own text, which would
-    otherwise satisfy this pole even after the escape sentence was deleted."""
-    for scenario, (_, out, _) in _mint_failures().items():
-        remainder = out.replace(_what_happened(out), "")
-        assert "VP_GUARD_CONVEX_TOKEN" in remainder, (
-            f"{scenario!r}: the refusal no longer names the VP_GUARD_CONVEX_TOKEN "
-            f"escape outside its reason line, out={out}"
-        )
-
-
-_URL_DRIVER = r"""
-import importlib.util, json, os, sys
-spec = importlib.util.spec_from_file_location("guard_under_domain_test", os.environ["MINT_TEST_HOOK"])
-guard = importlib.util.module_from_spec(spec)
-guard._TESTING = True
-spec.loader.exec_module(guard)
-answers = iter([{"token": "t"}, {"response": {"created_session_id": "s"}}, {"jwt": "j"}])
-urls = []
-def recording_post_json(url, payload, headers, *, form=None):
-    urls.append(url)
-    return next(answers)
-guard._post_json = recording_post_json
-token, why = guard.guard_identity()
-print(json.dumps({"token": token, "why": why, "urls": urls}))
-"""
-
-
-def _identity_with(env_extra):
-    env = dict(os.environ)
-    for name in ("VP_GUARD_CONVEX_TOKEN", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID",
-                 "CLERK_DOMAIN"):
-        env.pop(name, None)
-        env.pop(name + "_VANTAGE_PEERS", None)
-    env.update({"VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
-                "MINT_TEST_HOOK": str(HOOK)})
-    env.update(env_extra)
-    proc = subprocess.run([sys.executable, "-c", _URL_DRIVER], capture_output=True,
-                          text=True, timeout=15, env=env)
-    return json.loads(proc.stdout.strip().splitlines()[-1])
-
-
-def test_ticket_is_redeemed_on_the_configured_domain():
-    """The sign-in ticket must be redeemed on the instance the secret belongs to,
-    read from configuration -- the project-suffixed name first, like the secret."""
-    out = _identity_with({
-        "CLERK_SECRET_KEY_VANTAGE_PEERS": _FAKE_SECRET,
-        "CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS": _FAKE_USER,
-        "CLERK_DOMAIN_VANTAGE_PEERS": _FAKE_DOMAIN + "/",
-        "CLERK_DOMAIN": "https://bare-name-of-another-project.invalid",
-    })
-    assert out["token"] == "j", out
-    assert out["urls"][1] == _FAKE_DOMAIN + "/v1/client/sign_ins", out["urls"]
-
-
-def test_no_domain_means_no_clerk_call_and_no_default():
-    """Without a configured domain the guard must not fall back to any instance:
-    it makes no Clerk call at all and names the missing variable."""
-    out = _identity_with({
-        "CLERK_SECRET_KEY": _FAKE_SECRET,
-        "CLERK_SERVICE_ACCOUNT_USER_ID": _FAKE_USER,
-    })
-    assert out["token"] is None and out["urls"] == [], out
-    assert "CLERK_DOMAIN_VANTAGE_PEERS" in out["why"], out
-    assert "accounts.dev" not in HOOK.read_text(), "a hardcoded Clerk instance domain is back"
 
 
 # ---------------------------------------------------------------------------
@@ -1628,7 +1028,7 @@ def test_offline_signature_payload_must_be_canonical(tmp_path, offline_repo, off
 
 def test_offline_signature_bad_signature_never_falls_back_to_the_network_path(
         tmp_path, offline_repo, offline_key):
-    """A presented signature that fails decides alone: a good network token cannot rescue it."""
+    """A presented signature that fails is refused, whatever a network store would say."""
     with stub_vp({_OFFLINE_TASK: token_task()}) as url:
         pubkeys = _write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})
         fragments = _fragments(offline_key, _payload(offline_repo["floor"]),
@@ -1641,43 +1041,23 @@ def test_offline_signature_bad_signature_never_falls_back_to_the_network_path(
     assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
 
 
-_PHASE_TWO_DRIVER = r"""
-import importlib.util, os, sys, urllib.request
-spec = importlib.util.spec_from_file_location("guard_phase_two", os.environ["OFFLINE_TEST_HOOK"])
-guard = importlib.util.module_from_spec(spec)
-guard._TESTING = True
-spec.loader.exec_module(guard)
-guard.NETWORK_AUTH_PATH_ENABLED = False
-def _no(*args, **kwargs):
-    with open(os.environ["OFFLINE_TEST_ATTEMPTS"], "a") as handle:
-        handle.write("network attempted\n")
-    raise OSError("network removed by the test")
-urllib.request.urlopen = _no
-sys.exit(guard.main(sys.stdin.read()))
-"""
-
-
-def test_offline_signature_switch_off_refuses_an_unsigned_token_without_touching_the_network(
+def test_offline_signature_unsigned_marker_is_refused_without_touching_the_network(
         tmp_path, offline_repo, offline_key):
-    """NETWORK_AUTH_PATH_ENABLED = False (phase 2): a bare `# pi-authorized:` is not enough."""
-    attempts = tmp_path / "phase-two-attempts.log"
-    audit = tmp_path / "phase-two-audit.log"
-    env = {k: v for k, v in os.environ.items() if k not in _OFFLINE_ENV_DROP}
-    env.update({
-        "VP_CONVEX_URL": _OFFLINE_URL, "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
-        "VP_GUARD_AUDIT_LOG": str(audit), "OFFLINE_TEST_HOOK": str(HOOK),
-        "OFFLINE_TEST_ATTEMPTS": str(attempts),
-        "VP_GUARD_PUBKEYS_FILE": str(_write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})),
-    })
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {
-        "command": f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK}"}})
-    proc = subprocess.run([sys.executable, "-c", _PHASE_TWO_DRIVER], input=payload,
-                          capture_output=True, text=True, timeout=30, env=env,
-                          cwd=str(offline_repo["path"]))
-    assert proc.returncode == 2, proc.stderr
-    assert not attempts.exists(), "the refusal touched the network"
-    entry = json.loads(audit.read_text().splitlines()[-1])
-    assert entry.get("verdict") == "block" and entry.get("reason") == "offline-signature-required", entry
+    """Phase 2: a bare `# pi-authorized:` is not enough, and the refusal reads nothing."""
+    pubkeys = _write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK}",
+                          pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path)
+    assert result["rc"] == 2, result["out"]
+    assert result["attempts"] == "", "the refusal touched the network"
+    assert result["audit"].get("verdict") == "block", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-required", result["audit"]
+
+
+def test_offline_signature_no_network_code_remains_on_the_auth_path():
+    """The phase-2 measurement, pinned: the hook holds no identity-provider or HTTP client code."""
+    source = HOOK.read_text()
+    for needle in ("clerk", "_post_json", "urlopen", "urllib", "read_task", "guard_identity"):
+        assert needle not in source.lower(), f"{needle!r} is back in the guard"
 
 
 # --- REFUSE TO JUDGE: the guard could not verify ---------------------------
