@@ -159,3 +159,68 @@ ALLOW_CASES = {
 def test_dev_resolved_or_non_write_passes(name, guard_env_file, tmp_path):
     rc, out = run(ALLOW_CASES[name], guard_env_file, tmp_path)
     assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
+
+
+# ---------------------------------------------------------------------------
+# HEREDOC BODIES that a program consumes AS CODE (task k17bx73va6s36bg1qdqw0enjch8f97h2).
+# The body of `python3 - <<EOF` or `bash <<EOF` is the program the interpreter runs,
+# not data; the guard used to strip it before any judgement.
+# ---------------------------------------------------------------------------
+HEREDOC_BLOCK_CASES = {
+    "heredoc_fed_to_python_dash_runtime_write": (
+        "python3 - <<'EOF'\n"
+        "import os,urllib.request\n"
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/mutation', data=b'{}')\n"
+        "EOF"
+    ),
+    "heredoc_fed_to_python_bare_runtime_write": (
+        "python3 <<'EOF'\n"
+        "import os,urllib.request\n"
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/mutation', data=b'{}')\n"
+        "EOF"
+    ),
+    "heredoc_fed_to_bash_runtime_write": (
+        "bash <<'EOF'\n"
+        "curl -X POST \"$CONVEX_URL/api/mutation\" -d '{}'\n"
+        "EOF"
+    ),
+    "dev_deploy_key_cannot_excuse_heredoc_write": (
+        "CONVEX_DEPLOY_KEY='dev:fake-dev-y|secret' npx convex deploy; "
+        "python3 - <<'EOF'\n"
+        "import os,urllib.request\n"
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/mutation', data=b'{}')\n"
+        "EOF"
+    ),
+}
+
+HEREDOC_ALLOW_CASES = {
+    "heredoc_fed_to_python_dev_write": (
+        "CONVEX_URL=https://fake-dev-y.convex.cloud python3 - <<'EOF'\n"
+        "import os,urllib.request\n"
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/mutation', data=b'{}')\n"
+        "EOF"
+    ),
+    "heredoc_fed_to_python_read_only": (
+        "python3 - <<'EOF'\n"
+        "import os,urllib.request\n"
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/query')\n"
+        "EOF"
+    ),
+    "heredoc_consumed_as_data_by_cat": (
+        "cat <<'EOF'\n"
+        "curl -X POST $CONVEX_URL/api/mutation\n"
+        "EOF"
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(HEREDOC_BLOCK_CASES))
+def test_heredoc_program_runtime_write_blocks(name, guard_env_file, tmp_path):
+    rc, out = run(HEREDOC_BLOCK_CASES[name], guard_env_file, tmp_path)
+    assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
+
+
+@pytest.mark.parametrize("name", sorted(HEREDOC_ALLOW_CASES))
+def test_heredoc_dev_or_data_passes(name, guard_env_file, tmp_path):
+    rc, out = run(HEREDOC_ALLOW_CASES[name], guard_env_file, tmp_path)
+    assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
