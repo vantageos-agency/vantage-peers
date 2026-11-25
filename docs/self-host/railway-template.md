@@ -26,14 +26,14 @@ it says UNKNOWN and why.
 |---|---|---|
 | Package version | `5.1.0` | `grep '"version"' mcp-server/package.json` -> `"version": "5.1.0"` |
 | npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
-| Tools **registered** by the server | `121` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 121`, `registered names 121 vs documented names 121` |
-| Tools **advertised** to MCP clients (`tools/list`) | `95` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `95`; `grep -n 'tools are advertised' mcp-server/README.md` -> "95 tools are advertised to clients" |
-| Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 121 - 95 = 26 |
+| Tools **registered** by the server | `123` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 123`, `registered names 123 vs documented names 123` |
+| Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
+| Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 123 - 97 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
 | Backend contract version required | `30` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 30`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 30` |
 | Backend functions the server calls | `154` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
-A deployer's MCP client sees 95 tools, not 121. The server masks non-`core`
+A deployer's MCP client sees 97 tools, not 123. The server masks non-`core`
 tools out of `tools/list` via a data file (`mcp-server/tool-exposure.json`,
 key `"core"`, still an array of names) — masking, not deletion: the other 26
 tools stay registered but a client can neither list nor call them
@@ -41,11 +41,11 @@ tools stay registered but a client can neither list nor call them
 around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
-Not the same as the published release: the numbers 121 / 95 / contract 30 /
+Not the same as the published release: the numbers 123 / 97 / contract 30 /
 154 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
-package is `4.1.0`. Whether the `4.1.0` tarball on npm carries 121 or an
+package is `4.1.0`. Whether the `4.1.0` tarball on npm carries 123 or an
 earlier count of tools is UNKNOWN (the tarball was not unpacked); a deployer
 following the template's Source (`main`, see B1) gets the tree numbers.
 
@@ -60,15 +60,15 @@ Section B3. The live page may have changed since; re-read before editing.
 
 Source: the advertised-tool headings in `mcp-server/README.md`
 (`grep -n '^### ' mcp-server/README.md`). The README groups
-the 95 advertised tools into 13 headings (these replace the 22-heading
+the 97 advertised tools into 13 headings (these replace the 22-heading
 registered-count list the page carried before):
 
 Memory and search (10), Fix patterns (8), Missions and templates (9),
-Recurring tasks (7), Tasks (18), Messages (8), Briefing notes (5),
+Recurring tasks (7), Tasks (17), Messages (8), Briefing notes (5),
 Episodes (5), Diary (3), Billing (1), Profiles and peers (4), Knowledge
-bundles (OKF) (2), Other (15). Sum = 95.
+bundles (OKF) (2), Other (18). Sum = 97 (`awk '/<!-- tools:start -->/,/<!-- tools:end -->/' mcp-server/README.md | grep '^### '`, the 13 advertised headings).
 
-The page should say "13 categories, 95 tools", not repeat a registered
+The page should say "13 categories, 97 tools", not repeat a registered
 count. The 26 masked tools are listed only as names under `### Registered,
 not advertised (26)`.
 

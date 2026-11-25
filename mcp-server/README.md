@@ -182,7 +182,7 @@ An agent is identified by its **agent ID** (the `agentId` that `list_peers` retu
 _Applies to: Cloud and Self-host._
 
 <!-- tools:start -->
-95 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+97 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (10)
 
@@ -230,11 +230,9 @@ _Applies to: Cloud and Self-host._
 - `resume_recurring_task` (write) — Resume a paused recurring task template and recalculate its next scheduled run time.
 - `update_recurring_task` (write) — Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt.
 
-### Tasks (18)
+### Tasks (17)
 
 - `add_task_dependency` (write) — Add dependency task IDs to a task so it cannot start until all listed tasks complete.
-- `next_task` (read) — Get the one task an agent should take next: its first todo task in queue order whose dependencies are all done, or an explicit `found: false`.
-- `reorder_queue` (write) — Set the explicit work queue of one agent: the listed tasks get ranks 1..N, every other open task of that agent loses its rank, and an empty list clears the queue.
 - `block_task` (write, destructive) — Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked.
 - `bulk_complete_tasks` (write) — Bulk-close the open tasks matching a filter, in one atomic mutation.
 - `checkout_task` (write) — Atomically claim a todo task, preventing race conditions when multiple orchestrators compete.
@@ -244,7 +242,8 @@ _Applies to: Cloud and Self-host._
 - `delete_task` (write, destructive) — Permanently delete a task; only the creator or system role may delete.
 - `fail_task` (write) — Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote describing how the work ended.
 - `get_task` (read) — Fetch one task by its taskId.
-- `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first; `sort: "queue"` orders by the assignee's explicit queue.
+- `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first.
+- `next_task` (read) — Get the one task an agent should take next: among its todo tasks you may see, the first in queue order (ranked tasks by rank, then unranked by priority and age) whose dependencies are all done.
 - `pause_task` (write) — Close the task's open work segment and stop the duration clock, without ending the task.
 - `resume_task` (write) — Open a new work segment on a paused task and set it back to in_progress.
 - `search_tasks_by_keyword` (read) — BM25 full-text keyword search over task titles, ranked by relevance.
@@ -300,7 +299,7 @@ _Applies to: Cloud and Self-host._
 - `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (17)
+### Other (18)
 
 - `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
 - `check_repo_routing` (read) — Check that a list of repos is fully routed in your organisation, against the org's whole routing table.
@@ -318,6 +317,7 @@ _Applies to: Cloud and Self-host._
 - `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.
 - `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
 - `remove_repo_mapping` (write, destructive) — Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo.
+- `reorder_queue` (write) — Set the explicit work queue of one agent: the listed tasks get ranks 1..N in the order given (1 = next), and every other open task of that agent loses its rank.
 - `whoami` (read) — Report who this connection acts as and what it may read and write, read from its own credential only.
 
 The tools below are present in the server code but disabled in this release: a client can neither list nor call them. They are named so this reference matches the code exactly.
