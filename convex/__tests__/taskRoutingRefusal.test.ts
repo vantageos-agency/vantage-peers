@@ -131,7 +131,7 @@ describe("ADOPTED org: tasks:create against a routed repo", () => {
 		const msg = await refusal(create(t, "org-a", { assignedTo: ORCH, repo: "org-a/theirs" }));
 		expect(msg).toContain("RBAC_DENIED");
 		expect(msg).toContain("repo-routed-to-other-owner");
-		expect(msg).toMatch(new RegExp(`owner\\\\*":\\\\*"${OWNER}`));
+		expect(msg).toMatch(new RegExp(`owner \\\\*"${OWNER}`));
 		expect(await taskCount(t)).toBe(0);
 	});
 
@@ -186,7 +186,7 @@ describe("ADOPTED org: a [REVIEW] task and its reviewer", () => {
 		);
 		expect(msg).toContain("RBAC_DENIED");
 		expect(msg).toContain("reviewer-not-routed");
-		expect(msg).toMatch(/reviewer\\*":\\*"rev\\*"/);
+		expect(msg).toMatch(/reviewer \\*"rev\\*"/);
 		expect(await taskCount(t)).toBe(0);
 	});
 

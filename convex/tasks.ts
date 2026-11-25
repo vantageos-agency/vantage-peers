@@ -1078,7 +1078,7 @@ export const create = mutation({
 		await requireTaskRoutedAsDeclared(ctx, scope, {
 			door: "tasks:create",
 			repo: isReview ? repoOfReviewTask(taskArgs.title, repo) : repo,
-			assignedTo,
+			assignedToId,
 			isReview,
 			tenant: rowOrgId,
 			clerkOrgId: scope.orgClerkId,
