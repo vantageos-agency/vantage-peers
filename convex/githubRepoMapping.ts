@@ -417,6 +417,9 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		orchestratorId: v.optional(v.id("agents")),
+		reviewerId: v.optional(v.id("agents")),
+		fallbackReviewerId: v.optional(v.id("agents")),
 		// The organisation the MCP transport VERIFIED for a bearer that reaches
 		// Convex as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js).
 		// Without it a seat's mapping was written as a FLEET row, exempt from the
@@ -485,6 +488,9 @@ export const add = mutation({
 				orchestrator: args.orchestrator,
 				project: args.project,
 				active: args.active ?? true,
+				...(args.orchestratorId !== undefined ? { orchestratorId: args.orchestratorId } : {}),
+				...(args.reviewerId !== undefined ? { reviewerId: args.reviewerId } : {}),
+				...(args.fallbackReviewerId !== undefined ? { fallbackReviewerId: args.fallbackReviewerId } : {}),
 				...(args.reviewer !== undefined ? { reviewer: args.reviewer } : {}),
 				...(args.fallbackReviewer !== undefined
 					? { fallbackReviewer: args.fallbackReviewer }
@@ -497,6 +503,9 @@ export const add = mutation({
 			orchestrator: args.orchestrator,
 			project: args.project,
 			active: args.active ?? true,
+			...(args.orchestratorId !== undefined ? { orchestratorId: args.orchestratorId } : {}),
+			...(args.reviewerId !== undefined ? { reviewerId: args.reviewerId } : {}),
+			...(args.fallbackReviewerId !== undefined ? { fallbackReviewerId: args.fallbackReviewerId } : {}),
 			...(tenant !== undefined ? { orgId: tenant } : {}),
 			...(tenant !== undefined && scope.orgClerkId !== undefined
 				? { clerkOrgId: scope.orgClerkId }

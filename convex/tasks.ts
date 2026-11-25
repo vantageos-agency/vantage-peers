@@ -1078,7 +1078,7 @@ export const create = mutation({
 		await requireTaskRoutedAsDeclared(ctx, {
 			door: "tasks:create",
 			repo: isReview ? repoOfReviewTask(taskArgs.title, repo) : repo,
-			assignedTo,
+			assignedToId,
 			isReview,
 			tenant: rowOrgId,
 			clerkOrgId: scope.orgClerkId,
@@ -6906,7 +6906,7 @@ export const createOrUpdateReviewTask = internalMutation({
 				ctx,
 				"tasks:createOrUpdateReviewTask",
 				args.repoFullName,
-				args.assignedTo,
+				(await taskActorIdFields(ctx, undefined, { assignedTo: args.assignedTo })).assignedToId,
 			);
 		}
 		const assignedTo =

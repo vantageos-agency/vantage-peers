@@ -1144,6 +1144,9 @@ export default defineSchema({
 		// convex/lib/reviewRouting.ts.
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		orchestratorId: v.optional(v.id("agents")),
+		reviewerId: v.optional(v.id("agents")),
+		fallbackReviewerId: v.optional(v.id("agents")),
 		// TENANT. Absent = a FLEET row (the operator's own repositories, the
 		// historical meaning of every existing row — no backfill). Present = the
 		// client org that owns the repo. Written ONLY by the server from the
