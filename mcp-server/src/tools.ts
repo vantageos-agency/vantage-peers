@@ -10592,9 +10592,9 @@ export function registerTools(
 		server,
 		authCtx,
 		{
-			kind: "filtered",
+			kind: "public",
 			reason:
-				"unresolvedOrgDenial() refuses an unresolved caller; the route is read inside the caller's verified org at githubRepoMapping:getRoute (another org's row answers absent)",
+				"decided by its Convex door githubRepoMapping:getRoute, which refuses an unresolved caller (requireResolvedCaller, alsoRefusePreOrg) and reads inside the caller's verified org: doorScopeArgs() forwards verifiedOrg, unresolvedOrgDenial() refuses a non-master bearer with none, another org's row answers absent",
 		},
 		"get_repo_route",
 		"Get the review route of one GitHub repo in your organisation: routed, unreviewed or absent. " +
@@ -10646,9 +10646,9 @@ export function registerTools(
 		server,
 		authCtx,
 		{
-			kind: "filtered",
+			kind: "public",
 			reason:
-				"unresolvedOrgDenial() refuses an unresolved caller; every read (getRoute per repo, list all pages) runs inside the caller's verified org",
+				"decided by its Convex doors githubRepoMapping:getRoute and githubRepoMapping:list, which both refuse an unresolved caller (requireResolvedCaller) and read inside the caller's verified org: doorScopeArgs() forwards verifiedOrg on every call, unresolvedOrgDenial() refuses a non-master bearer with none",
 		},
 		"check_repo_routing",
 		"Check that a list of repos is fully routed in your organisation, against the org's whole routing table. " +
