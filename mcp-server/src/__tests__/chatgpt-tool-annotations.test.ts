@@ -151,6 +151,8 @@ const READ_ONLY_TOOLS = new Set([
 	"get_fix_pattern",
 	"get_mandate",
 	"get_repo_mapping",
+	"get_repo_route",
+	"check_repo_routing",
 	// Day 100 — Phase 2b get_by_id surface additions (same task; episodes dropped — uses get_memory)
 	"get_message",
 	"get_recurring_task",

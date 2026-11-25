@@ -10659,7 +10659,7 @@ export function registerTools(
 		},
 		"check_repo_routing",
 		"Check that a list of repos is fully routed in your organisation, against the org's whole routing table. " +
-			"Returns { routed[], unreviewed[], missing[], stale[], complete }; stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
+			"Returns { routed, unreviewed, missing, stale, complete }, each of the four a list of repos; stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
 			"WHEN: use after listing your real GitHub repos, to find repos with no owner, no reviewer, or a mapping for a repo that is gone. " +
 			"EXAMPLE: check_repo_routing repos=['vantageos-agency/vantage-peers','vantageos-agency/vantage-registry']. " +
 			"FR: Vérifier qu'une liste de dépôts est entièrement routée dans votre organisation.",
@@ -10669,7 +10669,7 @@ export function registerTools(
 				.min(1)
 				.max(500)
 				.describe(
-					"The organisation's real repository list, each as owner/name; 1 to 500. Duplicates are counted once.",
+					"The organisation's real repository list, each as owner/name. Duplicates are counted once.",
 				),
 		},
 		{
@@ -10684,7 +10684,7 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("check_repo_routing");
 				if (orgDenied) return orgDenied;
-				const wanted = [...new Set(repos)];
+				const wanted: string[] = [...new Set(repos as string[])];
 				const routed: string[] = [];
 				const unreviewed: string[] = [];
 				const missing: string[] = [];

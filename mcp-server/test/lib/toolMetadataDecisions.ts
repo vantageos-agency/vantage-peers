@@ -140,6 +140,8 @@ export const STRUCTURED_TOOLS = [
 	"delete_recurring_task",
 	"add_repo_mapping",
 	"remove_repo_mapping",
+	"get_repo_route",
+	"check_repo_routing",
 	"validate_fix",
 	"link_issue_to_pattern",
 	// lists and searches (task k17592gg5t2tencwxks3kysghx8htqg8, outputs 1/3):
