@@ -10588,10 +10588,6 @@ export function registerTools(
 
 	// ── get_repo_route ──────────────────────────────────────────────────────────
 
-	// oracle-justified: the route is read at the Convex door githubRepoMapping:getRoute under the caller's
-	//   VERIFIED org (verifiedOrg forwarded by doorScopeArgs, never an argument): a row of another org or of
-	//   the fleet is answered as absent, a caller with no org is RAISED. The MCP layer only refuses an
-	//   unresolved caller before the read.
 	defineTool(
 		server,
 		authCtx,
@@ -10646,9 +10642,6 @@ export function registerTools(
 
 	// ── check_repo_routing ──────────────────────────────────────────────────────
 
-	// oracle-justified: same tenant rule as get_repo_route and list_repo_mappings: both doors
-	//   (githubRepoMapping:getRoute, githubRepoMapping:list) resolve the org from the verified caller and the
-	//   MCP layer forwards verifiedOrg through doorScopeArgs; an unresolved caller is refused before any read.
 	defineTool(
 		server,
 		authCtx,
