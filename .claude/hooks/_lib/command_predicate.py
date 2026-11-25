@@ -1220,14 +1220,19 @@ def runtime_family(word: str) -> str:
     return re.sub(r"(?<=[a-z])[0-9][0-9.]*$", "", base)
 
 
-def _segment_head(segment: str, tokens) -> str | None:
-    if tokens is not None:
-        if not tokens:
-            return None
-        return runtime_family(tokens[0])
-    # Un-tokenizable: the first word is still the head.
-    words = segment.split(None, 1)
-    return runtime_family(words[0]) if words else None
+def _segment_heads(segment: str, tokens) -> set:
+    """Every family this segment may run under: the tokenizer's head, and the raw
+    first word after leading NAME=value assignments (a runner like `bun -e` is
+    transparent to the tokenizer, so its own word would otherwise be lost)."""
+    heads = set()
+    if tokens:
+        heads.add(runtime_family(tokens[0]))
+    for word in segment.split():
+        if re.match(r"[A-Za-z_][A-Za-z0-9_]*=", word):
+            continue
+        heads.add(runtime_family(word))
+        break
+    return heads
 
 
 def runtime_write_vector(segment: str, tokens=None) -> WriteVector | None:
@@ -1240,8 +1245,9 @@ def runtime_write_vector(segment: str, tokens=None) -> WriteVector | None:
     "endpoint-unknown" (a body or non-GET method on a Convex surface that is not
     provably /api/query).
     """
-    head = _segment_head(segment, tokens)
-    if head is None or head not in WRITE_VECTOR_HEADS:
+    heads = _segment_heads(segment, tokens)
+    head = next((h for h in sorted(heads) if h in WRITE_VECTOR_HEADS), None)
+    if head is None:
         return None
     if not CONVEX_REACH_RE.search(segment):
         return None
