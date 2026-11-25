@@ -89,7 +89,10 @@ async function run(
 			}
 			if (name === "githubRepoMapping:routedElsewhere") {
 				const asked = (a.repos as string[]) ?? [];
-				const answer = backend.elsewhere ?? { applicable: false, elsewhere: [] };
+				const answer = backend.elsewhere ?? {
+					applicable: false,
+					elsewhere: [],
+				};
 				// The fake answers only about the repos it was asked.
 				return {
 					applicable: answer.applicable,
@@ -392,7 +395,9 @@ describe("check_repo_routing", () => {
 			complete: true,
 		});
 		expect(r.structured).toEqual(r.body);
-		const doors = r.calls.filter((c) => c.name === "githubRepoMapping:routedElsewhere");
+		const doors = r.calls.filter(
+			(c) => c.name === "githubRepoMapping:routedElsewhere",
+		);
 		expect(doors).toHaveLength(1);
 		expect(doors[0].args.repos).toEqual(["client/ws", "client/ws2"]);
 		expect(doors[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
@@ -418,7 +423,10 @@ describe("check_repo_routing", () => {
 			"check_repo_routing",
 			CLIENT_SEAT,
 			{ repos: ["client/ws"] },
-			{ pages: [{ items: [], nextCursor: null }], elsewhere: { applicable: false, elsewhere: [] } },
+			{
+				pages: [{ items: [], nextCursor: null }],
+				elsewhere: { applicable: false, elsewhere: [] },
+			},
 		);
 		expect(r.body?.routedElsewhere).toBe(0);
 		expect(r.body?.missing).toEqual(["client/ws"]);
@@ -431,7 +439,9 @@ describe("check_repo_routing", () => {
 			{ repos: ["acme/a"] },
 			{ routes, pages: [{ items: [{ repo: "acme/a" }], nextCursor: null }] },
 		);
-		expect(r.calls.filter((c) => c.name === "githubRepoMapping:routedElsewhere")).toHaveLength(0);
+		expect(
+			r.calls.filter((c) => c.name === "githubRepoMapping:routedElsewhere"),
+		).toHaveLength(0);
 	});
 
 	it("an unreviewed repo alone makes the check incomplete", async () => {
