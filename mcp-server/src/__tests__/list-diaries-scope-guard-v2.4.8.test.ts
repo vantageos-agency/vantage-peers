@@ -7,19 +7,24 @@
  * no args (orchestrator=undefined, createdBy=undefined both satisfied
  * the old `!args.orchestrator` shorthand).
  *
- * Fix: REQUIRE at least one of orchestrator === oauthCtx.userId OR
- * createdBy === oauthCtx.userId for non-master callers. No undefined passes.
+ * Fix: REQUIRE at least one of orchestrator / createdBy to be one of the caller's
+ * own verified identities. Task k17425xt3tjf8qkynefppcps1d8jdk5s widened "own" from
+ * the bare userId to the resolved agent name and 'user:<subject>', and made an
+ * unfiltered call default to the caller's own author instead of a refusal; the
+ * behavioural poles live in test/list-diaries-own-agent.test.ts. What this static
+ * file still pins: no undefined-shorthand fleet read, and the guard shape.
  *
  * These tests are STATIC (parse tools.ts source) — no Convex client needed.
  * They validate the fix pattern is present and that the forbidden undefined
  * shorthand is absent.
  *
- * 5 cases per the brief:
- * 1. non-master {} → Forbidden
- * 2. non-master {orchestrator: oauthCtx.userId} → passes guard
- * 3. non-master {createdBy: oauthCtx.userId} → passes guard
- * 4. non-master {orchestrator: 'other'} → Forbidden
- * 5. master {} → bypasses guard (isMasterScope)
+ * Cases (the unfiltered non-master call now defaults to its own author, so it no
+ * longer ends in Forbidden):
+ * 1. no undefined-shorthand; strict membership in the caller's own identities
+ * 2. a filter that is neither own identity → Forbidden
+ * 3. the refusal names both filter options
+ * 4. master bypasses the guard (isMasterScope)
+ * 5. the own-identity set is built from verified values only
  *
  * Eta REVISE comment:
  * https://github.com/vantageos-agency/vantage-peers/pull/569#issuecomment-4591141712
@@ -46,41 +51,40 @@ function extractListDiariesGuardBlock(): string {
 }
 
 describe("list_diaries scope guard — v2.4.8 iter 2 regression", () => {
-	it("Test 1: guard block uses strict equality (=== myId) not undefined-shorthand (!args.orchestrator)", () => {
+	it("Test 1: guard block uses strict membership in the caller's own identities, not undefined-shorthand", () => {
 		const body = extractListDiariesGuardBlock();
-		// The old broken pattern: !args.orchestrator (truthy for undefined)
 		expect(body).not.toMatch(/!\s*args\.orchestrator\b/);
 		expect(body).not.toMatch(/!\s*args\.createdBy\b/);
-		// The correct pattern: strict === comparison
-		expect(body).toMatch(/orchestrator\s*===\s*myId/);
-		expect(body).toMatch(/createdBy\s*===\s*myId/);
+		expect(body).toMatch(
+			/orchestrator\s*!==\s*undefined\s*&&\s*own\.has\(orchestrator\)/,
+		);
+		expect(body).toMatch(
+			/createdBy\s*!==\s*undefined\s*&&\s*own\.has\(createdBy\)/,
+		);
 	});
 
-	it("Test 2: non-master guard requires at least ONE self-scoped filter (OR logic, not AND)", () => {
+	it("Test 2: a supplied filter must be one of the caller's own identities (neither → Forbidden)", () => {
 		const body = extractListDiariesGuardBlock();
-		// The fix: if (!orchestratorScoped && !createdByScoped) → Forbidden
-		// Old broken: if (!scopedOrchestrator || !scopedCreatedBy) → this was AND-blocked
-		// The correct pattern blocks when BOTH are false (AND of negations = neither is scoped)
-		expect(body).toMatch(/!\s*orchestratorScoped\s*&&\s*!\s*createdByScoped/);
+		expect(body).toMatch(
+			/!\(orchestrator\s*!==\s*undefined\s*&&\s*own\.has\(orchestrator\)\)\s*&&\s*!\(createdBy\s*!==\s*undefined\s*&&\s*own\.has\(createdBy\)\)/,
+		);
 	});
 
-	it("Test 3: guard error message names both filter options (orchestrator OR createdBy)", () => {
+	it("Test 3: guard error message names both filter options (orchestrator or createdBy)", () => {
 		const body = extractListDiariesGuardBlock();
 		expect(body).toMatch(/Forbidden.*list_diaries/s);
-		// Error must mention both options so caller knows how to fix
-		expect(body).toMatch(/orchestrator=.*OR.*createdBy=/s);
+		expect(body).toMatch(/orchestrator or createdBy/);
 	});
 
 	it("Test 4: master bypass is present (isMasterScope short-circuits the guard)", () => {
 		const body = extractListDiariesGuardBlock();
 		expect(body).toMatch(/isMasterScope\(oauthCtx\)/);
-		// The guard is nested inside: if (oauthCtx && !isMasterScope(oauthCtx))
 		expect(body).toMatch(/!\s*isMasterScope\(oauthCtx\)/);
 	});
 
-	it("Test 5: the OR-shorthand variable names match the fix pattern (orchestratorScoped, createdByScoped)", () => {
+	it("Test 5: the own identities come from the verified context, never from an argument", () => {
 		const body = extractListDiariesGuardBlock();
-		expect(body).toMatch(/const\s+orchestratorScoped\s*=/);
-		expect(body).toMatch(/const\s+createdByScoped\s*=/);
+		expect(body).toMatch(/resolveActingAgent\(oauthCtx,\s*verifiedActor\)/);
+		expect(body).toMatch(/oauthCtx\.userId/);
 	});
 });

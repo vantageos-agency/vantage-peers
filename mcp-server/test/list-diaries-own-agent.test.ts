@@ -159,7 +159,9 @@ describe("DEFAULT — a person with no agent resolved", () => {
 	});
 });
 
-describe.each(OWNERS)("OTHER — %s is refused another member", (_label, make) => {
+describe.each(
+	OWNERS,
+)("OTHER — %s is refused another member", (_label, make) => {
 	const OTHERS: Array<[string, Record<string, unknown>]> = [
 		["another agent's name as createdBy", { createdBy: OTHER_AGENT }],
 		["another agent's name as orchestrator", { orchestrator: OTHER_AGENT }],

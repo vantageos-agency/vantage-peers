@@ -8163,11 +8163,12 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"non-master restricted in-handler to orchestrator/createdBy===oauthCtx.userId",
+				"non-master restricted in-handler to its own verified identities (its resolved agent name, 'user:<subject>', the bare subject); no filter defaults to its own author",
 		},
 		"list_diaries",
 		"List diary entries filtered by orchestrator or author, newest first with cursor paging support. " +
 			`${listContract("list_diaries")} ` +
+			"A member (non-master) caller sees its own diary only: its agent name, as whoami's agent_name shows it, or 'user:<subject>' for a person; with no filter it defaults to its own author, and another member's name or ID is refused. " +
 			"WHEN: use to review recent history across sessions or audit a period of activity. " +
 			"EXAMPLE: list_diaries orchestrator='beta' limit=10.",
 		{
@@ -8204,20 +8205,38 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List diary entries",
 		},
-		async ({ orchestrator, createdBy, limit, cursor }) => {
+		async ({ orchestrator, createdBy: createdByArg, limit, cursor }) => {
+			let createdBy = createdByArg;
 			try {
 				// v2.4.8: orchestrator (writer-intent) and createdBy (auth-derived
 				// author) are separate filters — NOT aliases. Forward both independently.
 				// Non-master: REQUIRE at least one explicit self-scope — undefined passes
 				// through are forbidden. Mirrors v2.4.7 effectiveOrchestrator shortcircuit:
 				// undefined !== myId → Forbidden. No silent fleet-read for non-master callers.
+				// The caller's own verified identities, never a client-supplied value:
+				// its resolved agent name (what whoami reports as agent_name; an agent's
+				// entries are written under it) and its person form ('user:<subject>',
+				// plus the bare subject, kept for backward compatibility).
 				if (oauthCtx && !isMasterScope(oauthCtx)) {
-					const myId = oauthCtx.userId;
-					const orchestratorScoped = orchestrator === myId;
-					const createdByScoped = createdBy === myId;
-					if (!orchestratorScoped && !createdByScoped) {
+					const agentName = resolveActingAgent(oauthCtx, verifiedActor).actor
+						?.agentName;
+					const own = new Set<string>([
+						`${PERSON_ACTOR_PREFIX}${oauthCtx.userId}`,
+						oauthCtx.userId,
+					]);
+					if (agentName !== undefined && agentName !== "") own.add(agentName);
+					if (orchestrator === undefined && createdBy === undefined) {
+						// No filter: the caller's own diary, not a refusal.
+						createdBy =
+							agentName !== undefined && agentName !== ""
+								? agentName
+								: `${PERSON_ACTOR_PREFIX}${oauthCtx.userId}`;
+					} else if (
+						!(orchestrator !== undefined && own.has(orchestrator)) &&
+						!(createdBy !== undefined && own.has(createdBy))
+					) {
 						return mcpError(
-							`Forbidden: list_diaries requires orchestrator='${myId}' OR createdBy='${myId}' for non-master scope (current scope: ${oauthCtx.scopeProfile}).`,
+							`Forbidden: list_diaries accepts only your own identity for non-master scope: orchestrator or createdBy one of ${[...own].map((i) => `'${i}'`).join(", ")} (current scope: ${oauthCtx.scopeProfile}).`,
 						);
 					}
 				}
