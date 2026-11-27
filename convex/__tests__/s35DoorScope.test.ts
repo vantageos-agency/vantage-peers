@@ -15,7 +15,8 @@
 //   PRESENT   the service account carrying verifiedOrg A reads A's row
 //   REFUSED   verifiedOrg B gets the door's EXISTING refusal for A's row
 //             (null; recurringTasks:getById raises RBAC_DENIED as it always did)
-//   CLAIMLESS the service account with no verifiedOrg is refused (R-54)
+//   CLAIMLESS (expand only) the service account with no verifiedOrg reads as before;
+//             refusing it is a later contract step, once the MCP forwards verifiedOrg
 //   MEMBER    an ordinary member of A without verifiedOrg reads as before
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -184,14 +185,12 @@ describe("tasks:getBulkCompleteRun", () => {
 			}),
 		).toBeNull();
 	});
-	test("CLAIMLESS: the service account with no verifiedOrg is refused", async () => {
+	test("CLAIMLESS (expand): the service account with no verifiedOrg still reads the run", async () => {
 		const { t } = await world();
-		const d = await denial(
-			asService(t).query(api.tasks.getBulkCompleteRun, { bulkRunId: RUN }),
-		);
-		expect(d).toContain("RBAC_DENIED");
-		expect(d).toContain("verified-org-required");
-		expect(d).toContain("tasks:getBulkCompleteRun");
+		const r = await asService(t).query(api.tasks.getBulkCompleteRun, {
+			bulkRunId: RUN,
+		});
+		expect(r?.closed).toBe(3);
 	});
 	test("MEMBER: an ordinary member of A without verifiedOrg reads as before", async () => {
 		const { t } = await world();
@@ -220,13 +219,12 @@ describe("missions:get", () => {
 			}),
 		).toBeNull();
 	});
-	test("CLAIMLESS: the service account with no verifiedOrg is refused", async () => {
+	test("CLAIMLESS (expand): the service account with no verifiedOrg still reads the mission", async () => {
 		const { t, ids } = await world();
-		const d = await denial(
-			asService(t).query(api.missions.get, { missionId: ids.mission }),
-		);
-		expect(d).toContain("verified-org-required");
-		expect(d).toContain("missions:get");
+		const r = await asService(t).query(api.missions.get, {
+			missionId: ids.mission,
+		});
+		expect(r?.name).toBe("A-PRIVATE-MISSION");
 	});
 	test("MEMBER: an ordinary member of A without verifiedOrg reads as before", async () => {
 		const { t, ids } = await world();
@@ -256,15 +254,12 @@ describe("recurringTasks:getById", () => {
 		);
 		expect(d).toContain("RBAC_DENIED");
 	});
-	test("CLAIMLESS: the service account with no verifiedOrg is refused", async () => {
+	test("CLAIMLESS (expand): the service account with no verifiedOrg still reads the routine", async () => {
 		const { t, ids } = await world();
-		const d = await denial(
-			asService(t).query(api.recurringTasks.getById, {
-				recurringTaskId: ids.recurring,
-			}),
-		);
-		expect(d).toContain("verified-org-required");
-		expect(d).toContain("recurringTasks:getById");
+		const r = await asService(t).query(api.recurringTasks.getById, {
+			recurringTaskId: ids.recurring,
+		});
+		expect(r?.title).toBe("A-PRIVATE-ROUTINE");
 	});
 	test("MEMBER: an ordinary member of A without verifiedOrg reads as before", async () => {
 		const { t, ids } = await world();
@@ -293,13 +288,12 @@ describe("tasks:getById", () => {
 			}),
 		).toBeNull();
 	});
-	test("CLAIMLESS: the service account with no verifiedOrg is refused", async () => {
+	test("CLAIMLESS (expand): the service account with no verifiedOrg still reads the task", async () => {
 		const { t, ids } = await world();
-		const d = await denial(
-			asService(t).query(api.tasks.getById, { taskId: ids.task }),
-		);
-		expect(d).toContain("verified-org-required");
-		expect(d).toContain("tasks:getById");
+		const r = await asService(t).query(api.tasks.getById, {
+			taskId: ids.task,
+		});
+		expect(r?.title).toBe("A-PRIVATE-TASK");
 	});
 	test("MEMBER: an ordinary member of A without verifiedOrg reads as before", async () => {
 		const { t, ids } = await world();

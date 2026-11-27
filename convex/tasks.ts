@@ -78,7 +78,6 @@ import {
 } from "./lib/personPrincipal";
 import {
 	assertRowInVerifiedOrg,
-	requireVerifiedOrgFromServiceAccount,
 	resolveDoorVerifiedOrg,
 	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
@@ -1397,13 +1396,8 @@ export const getById = query({
 		// used to DROP: its args window was cut at the word "handler" inside the
 		// comment above `args`, so it matched no org-shaped field and never
 		// appeared in the count (scripts/check-public-fn-org-arg-identity.py).
+		// S-35 expand: claimless service-account read kept until the MCP forwards verifiedOrg (contract step: refuse it, task k17d4vqbcwfz297b3p9g639av18k1pj1 follow-up).
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		// R-54: a claimless service-account call is refused, never served as master.
-		requireVerifiedOrgFromServiceAccount(
-			transportScope,
-			args.verifiedOrg,
-			"tasks:getById",
-		);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
@@ -6225,14 +6219,9 @@ export const getBulkCompleteRun = query({
 	),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated 2026-10-05 with `grep -rn "getBulkCompleteRun" convex mcp-server/src` -> the only caller is the MCP tool get_bulk_complete_run (imperative convex.query); the dashboard has no reference. The anonymous refusal stays a RAISE; no render exists for a throw to crash.
+		// S-35 expand: claimless service-account read kept until the MCP forwards verifiedOrg (contract step: refuse it, task k17d4vqbcwfz297b3p9g639av18k1pj1 follow-up).
 		const transportScope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
 		requireResolvedCaller(transportScope, "tasks:getBulkCompleteRun");
-		// R-54: a claimless service-account call is refused, never served as master.
-		requireVerifiedOrgFromServiceAccount(
-			transportScope,
-			args.verifiedOrg,
-			"tasks:getBulkCompleteRun",
-		);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
