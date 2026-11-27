@@ -30,7 +30,7 @@ it says UNKNOWN and why.
 | Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
 | Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 123 - 97 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
-| Backend contract version required | `34` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 34`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 34` |
+| Backend contract version required | `35` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 35`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 35` |
 | Backend functions the server calls | `155` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
 A deployer's MCP client sees 97 tools, not 123. The server masks non-`core`
