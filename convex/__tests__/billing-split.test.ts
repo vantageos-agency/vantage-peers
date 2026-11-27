@@ -171,6 +171,64 @@ describe("billingSummaryByProject: noProjectCount / noDurationCount", () => {
 		expect(r.noDurationTasksTruncated).toBe(true);
 	});
 
+	test("noDurationTasksTruncated is false when rows lack completedAt and the list is under its cap", async () => {
+		const t = createT();
+		const now = Date.now();
+		await t.run(async (ctx) => {
+			for (let i = 0; i < 3; i++) {
+				await ctx.db.insert("tasks", {
+					title: `no-completedAt-${i}`,
+					assignedTo: "sigma",
+					priority: "low" as const,
+					status: "done" as const,
+					project: "p",
+					createdBy: "sigma",
+					createdAt: now - 2000,
+					updatedAt: now,
+				});
+			}
+		});
+		await seedDone(t, { title: "listed", project: "p", completedAt: now - 100 });
+		const r = await asService(t).query(api.tasks.billingSummaryByProject, {
+			startDate: now - 10_000,
+			endDate: now,
+			listNoDuration: true,
+		});
+		expect(r.noDurationTasks?.length).toBe(1);
+		expect(r.noDurationTasksTruncated).toBe(false);
+	});
+
+	test("noDurationTasksTruncated is false at exactly the cap, true one row past it", async () => {
+		const t = createT();
+		const now = Date.now();
+		const fill = async (from: number, to: number) =>
+			t.run(async (ctx) => {
+				for (let i = from; i < to; i++) {
+					await ctx.db.insert("tasks", {
+						title: `nd-${i}`,
+						assignedTo: "sigma",
+						priority: "low" as const,
+						status: "done" as const,
+						project: "p",
+						completedAt: now - 1000 + i,
+						createdBy: "sigma",
+						createdAt: now - 2000,
+						updatedAt: now,
+					});
+				}
+			});
+		const ask = () =>
+			asService(t).query(api.tasks.billingSummaryByProject, {
+				startDate: now - 10_000,
+				endDate: now,
+				listNoDuration: true,
+			});
+		await fill(0, 200);
+		expect((await ask()).noDurationTasksTruncated).toBe(false);
+		await fill(200, 201);
+		expect((await ask()).noDurationTasksTruncated).toBe(true);
+	});
+
 	test("tenant isolation: org A never lists org B's no-duration task", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a", ["sigma"]);
