@@ -10336,7 +10336,7 @@ export function registerTools(
 		},
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing, or record that nobody owns the repo (outOfScope). " +
-			"Returns { id, repo, orchestrator, outOfScope { reason }, project, active, reviewer, fallbackReviewer } (plus the agent IDs you gave); calling again for the same repo updates the mapping and restates its agent IDs. " +
+			"Returns { id, repo, orchestrator, outOfScope { reason }, project, active, reviewer, fallbackReviewer, orchestratorAgentId, reviewerAgentId, fallbackReviewerAgentId } (the agent IDs only when you gave them); calling again for the same repo updates the mapping and restates its agent IDs. " +
 			"WHEN: use when adding a new repo to monitoring, changing which orchestrator handles its events, or recording a repo no station owns. " +
 			"EXAMPLE: add_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'. " +
 			"EXAMPLE (nobody owns it): add_repo_mapping repo='vantageos-agency/old-fork' project='archive' outOfScope={reason:'no owning station, no activity in 30 days'}.",
