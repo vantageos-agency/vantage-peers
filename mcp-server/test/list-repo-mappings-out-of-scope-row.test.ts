@@ -60,7 +60,9 @@ function capture(page: unknown): Captured {
 	} as never;
 	registerTools(mockServer, mockConvex, masterCtx);
 	if (!found) {
-		throw new Error("list_repo_mappings was not registered with an outputSchema");
+		throw new Error(
+			"list_repo_mappings was not registered with an outputSchema",
+		);
 	}
 	return found;
 }
