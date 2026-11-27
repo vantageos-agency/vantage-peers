@@ -12,6 +12,13 @@
  * concatenation, extra non-literal argument) fails by default, naming the
  * expression. Nothing is skipped silently: an argument kind the guard does
  * not know how to read is reported as a violation.
+ *
+ * Second guard, keyed on the BINDING rather than on message spelling: the
+ * `Bun.serve(...)` result is bound once, and every reference to that
+ * identifier in its scope other than the member access `<binding>.port` is a
+ * violation, wherever it flows (a variable, a differently tagged or untagged
+ * log, an alias, a destructuring, a call argument, a spread, element access).
+ * Aliases are not followed: any non-`.port` reference is itself the violation.
  */
 
 import { readFileSync } from "node:fs";
@@ -88,6 +95,99 @@ function violations(call: ts.CallExpression): string[] {
 	}
 	return bad;
 }
+
+/** The one Bun.serve binding: found on the syntax tree, loud on 0 or many. */
+function bunServeBinding(): ts.VariableDeclaration {
+	const found: ts.VariableDeclaration[] = [];
+	const visit = (n: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(n) &&
+			n.initializer !== undefined &&
+			ts.isCallExpression(n.initializer) &&
+			ts.isPropertyAccessExpression(n.initializer.expression) &&
+			ts.isIdentifier(n.initializer.expression.expression) &&
+			n.initializer.expression.expression.text === "Bun" &&
+			n.initializer.expression.name.text === "serve"
+		) {
+			found.push(n);
+		}
+		ts.forEachChild(n, visit);
+	};
+	visit(sf);
+	// Also any Bun.serve(...) call that is NOT the initializer of a binding.
+	let calls = 0;
+	const count = (n: ts.Node): void => {
+		if (
+			ts.isCallExpression(n) &&
+			ts.isPropertyAccessExpression(n.expression) &&
+			ts.isIdentifier(n.expression.expression) &&
+			n.expression.expression.text === "Bun" &&
+			n.expression.name.text === "serve"
+		) {
+			calls++;
+		}
+		ts.forEachChild(n, count);
+	};
+	count(sf);
+	if (found.length !== 1 || calls !== 1 || !ts.isIdentifier(found[0].name)) {
+		throw new Error(
+			`expected exactly one \`const <identifier> = Bun.serve(...)\` binding and one Bun.serve call; found ${found.length} binding(s), ${calls} call(s)`,
+		);
+	}
+	return found[0];
+}
+
+/** Every reference to the binding in its scope, other than the declaration. */
+function bindingReferences(decl: ts.VariableDeclaration): ts.Identifier[] {
+	const name = (decl.name as ts.Identifier).text;
+	let scope: ts.Node = decl;
+	while (scope.parent && !ts.isBlock(scope) && !ts.isSourceFile(scope)) {
+		scope = scope.parent;
+	}
+	const refs: ts.Identifier[] = [];
+	const visit = (n: ts.Node): void => {
+		if (ts.isIdentifier(n) && n.text === name && n !== decl.name) {
+			const p = n.parent;
+			const isMemberName = ts.isPropertyAccessExpression(p) && p.name === n;
+			const isKey =
+				(ts.isPropertyAssignment(p) && p.name === n) ||
+				(ts.isBindingElement(p) && p.propertyName === n);
+			if (!isMemberName && !isKey) refs.push(n);
+		}
+		ts.forEachChild(n, visit);
+	};
+	visit(scope);
+	return refs;
+}
+
+function bindingViolations(): string[] {
+	return bindingReferences(bunServeBinding())
+		.filter((id) => {
+			const p = id.parent;
+			return !(
+				ts.isPropertyAccessExpression(p) &&
+				p.expression === id &&
+				p.name.text === "port"
+			);
+		})
+		.map(
+			(id) =>
+				`${file}:${lineOf(id)}: ${id.parent.getText(sf)} (only \`${id.text}.port\` may reference the Bun.serve binding)`,
+		);
+}
+
+describe("server-http Bun.serve binding", () => {
+	it("is found exactly once and only .port is referenced (positive pin)", () => {
+		const refs = bindingReferences(bunServeBinding()).map((id) =>
+			id.parent.getText(sf),
+		);
+		expect(refs).toEqual(["server.port"]);
+	});
+
+	it("no reference to the binding other than .port", () => {
+		expect(bindingViolations()).toEqual([]);
+	});
+});
 
 describe("server-http startup logs", () => {
 	const calls = taggedConsoleCalls();
