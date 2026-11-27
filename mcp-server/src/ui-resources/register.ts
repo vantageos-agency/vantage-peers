@@ -139,13 +139,11 @@ export function uiResourceDoorClaim(
  * carries none (its own identity reaches Convex), nor does a bearer that resolved no
  * agent: it is sent as it was.
  */
-export function uiResourceActorClaim(
+export function uiResourceActorOf(
 	oauthCtx: OAuthContext,
 	door: string,
-): { verifiedActor?: VerifiedActorArg } {
-	if (!VERIFIED_ACTOR_DOORS.has(door)) return {};
-	const verifiedActor = verifiedActorOf(oauthCtx);
-	return verifiedActor === undefined ? {} : { verifiedActor };
+): VerifiedActorArg | undefined {
+	return VERIFIED_ACTOR_DOORS.has(door) ? verifiedActorOf(oauthCtx) : undefined;
 }
 
 export function registerUiResources(
@@ -187,10 +185,11 @@ export function registerUiResources(
 			) => {
 				// The caller's verified claim rides every door that takes one; set
 				// last so a URI-derived argument can never replace it.
+				const verifiedActor = uiResourceActorOf(ctx, functionName);
 				const scoped = {
 					...args,
 					...uiResourceDoorClaim(ctx, functionName),
-					...uiResourceActorClaim(ctx, functionName),
+					...(verifiedActor !== undefined ? { verifiedActor } : {}),
 				};
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, scoped as any);
