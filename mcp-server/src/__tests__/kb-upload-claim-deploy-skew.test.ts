@@ -51,6 +51,7 @@ function stubConvex(impl: (path: string) => unknown) {
 
 const teamA: OAuthContext = {
 	clientId: "dcr-clerk-org-A",
+	clerkJwt: "jwt-org-A",
 	userId: "user-123",
 	scopes: ["mcp:full"],
 	scopeProfile: "team-member",
