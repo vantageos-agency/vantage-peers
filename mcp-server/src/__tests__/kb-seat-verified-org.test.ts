@@ -77,8 +77,12 @@ const seatCtx = (
 		accessTokenHash: "hash-probe-a",
 	}) as OAuthContext;
 
+// A Clerk-session bearer: its own org is seen by Convex, so no verified slug is
+// forwarded and the org derives from its team/<org> prefix. (A prefix-only bearer
+// with no Clerk session is refused: kb-claimless-refusal.test.ts.)
 const teamACtx = {
 	...base,
+	clerkJwt: "jwt-org-A",
 	clientId: "dcr-clerk-org-A",
 	scopeProfile: "team-member",
 	fromAllowList: [],
@@ -226,7 +230,7 @@ describe("pole 3: no verified org still refuses AUTH_NO_ORG_ID", () => {
 	});
 });
 
-describe("pole 4: the team/<org> bearer path is unchanged", () => {
+describe("pole 4: the Clerk team/<org> bearer path is unchanged", () => {
 	it("derives org-A from the team prefix and forwards no verifiedOrg", async () => {
 		const { tool, action, mutation } = setup(teamACtx);
 		await tool("store_document_chunked")(STORE_ARGS);
