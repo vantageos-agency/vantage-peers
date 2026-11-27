@@ -95,17 +95,6 @@ describe("pin 1 — DOOR_SCOPE is the door's own validator", () => {
 	}
 });
 
-// DECLARED EXEMPTION: get_memory is a READ that reaches memories:getMemory
-// without verifiedOrg and scopes the row after the read (scopeFilterGet), as it
-// did at 010edc9a. It writes nothing, so it is outside this defect (a write
-// forwarding less than its read); aligning it with get_episode changes what a
-// read returns and is left to its own task. Listed, never silent.
-const READ_EXEMPT = [{ door: "memories:getMemory", anchor: '"get_memory",' }];
-function near(anchor: string, index: number): boolean {
-	const at = TOOLS_SRC.lastIndexOf(anchor, index);
-	return at !== -1 && index - at < 2000;
-}
-
 describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through the resolver", () => {
 	const KB_SRC = readFileSync(
 		resolve(HERE, "../src/tools/kbIngest.ts"),
@@ -162,8 +151,6 @@ describe("pin 2 — every scope-taking door call goes through the resolver", () 
 			const door = `${m[1]}:${m[2]}`;
 			if (DOOR_SCOPE[door] === undefined) continue;
 			const line = TOOLS_SRC.slice(0, m.index).split("\n").length;
-			if (READ_EXEMPT.some((e) => e.door === door && near(e.anchor, m.index)))
-				continue;
 			const window = TOOLS_SRC.slice(
 				Math.max(0, m.index - 1200),
 				m.index + 1500,
@@ -242,6 +229,7 @@ const personElseOrg: Legacy = (ctx, a) => {
 /** [tool, door, legacy composition, tool is a person door (personDoor: true)] */
 const SITES: [string, string, Legacy, boolean][] = [
 	["get_episode", "memories:getMemory", org, false],
+	["get_memory", "memories:getMemory", org, false],
 	[
 		"send_message",
 		"messages:sendMessage",
