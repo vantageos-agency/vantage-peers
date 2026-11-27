@@ -186,13 +186,12 @@ export function registerUiResources(
 				// The caller's verified claim rides every door that takes one; set
 				// last so a URI-derived argument can never replace it.
 				const verifiedActor = uiResourceActorOf(ctx, functionName);
-				const scoped = {
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				return convex.query(functionName as any, {
 					...args,
 					...uiResourceDoorClaim(ctx, functionName),
 					...(verifiedActor !== undefined ? { verifiedActor } : {}),
-				};
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				return convex.query(functionName as any, scoped as any);
+				} as never);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
 			// (server-http.ts) from the verified oauthCtx, as before the extraction.
