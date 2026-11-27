@@ -1746,7 +1746,18 @@ export const listRepoMappingsServedOutputSchema = pageOf(
 			.describe("The GitHub repository, as owner/name, e.g. 'acme/app'."),
 		orchestrator: z
 			.string()
-			.describe("The orchestrator the repository's events are routed to."),
+			.optional()
+			.describe(
+				"The orchestrator the repository's events are routed to; absent on an out-of-scope row (a repository nobody owns).",
+			),
+		outOfScope: z
+			.looseObject({
+				reason: z.string().describe("Why nobody owns the repository."),
+			})
+			.optional()
+			.describe(
+				"Present when the repository is recorded as owned by nobody, with the reason; absent on a routed row, and on lite rows.",
+			),
 		project: z.string().describe("The project the repository belongs to."),
 		active: z
 			.boolean()
@@ -1778,9 +1789,27 @@ export const listRepoMappingsServedOutputSchema = pageOf(
 			.describe(
 				"Who reviews when the reviewer cannot; absent when the fleet default applies, and on lite rows.",
 			),
+		orchestratorAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The ID of the agent the orchestrator label names; absent on a row that routes by label only, on an out-of-scope row, and on lite rows.",
+			),
+		reviewerAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The ID of the agent the reviewer label names; absent when none was stamped, and on lite rows.",
+			),
+		fallbackReviewerAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The ID of the agent the fallback reviewer label names; absent when none was stamped, and on lite rows.",
+			),
 		orgId: orgSlug("mapping"),
 	}),
-	"The mappings, newest first; lite rows carry _id, _creationTime, repo, orchestrator and project.",
+	"The mappings, newest first; lite rows carry _id, _creationTime, repo, orchestrator (absent on an out-of-scope row) and project, full rows every stored field.",
 );
 
 /** list_fix_patterns: fixPatterns:listAll / listByProject `returns:`. */
