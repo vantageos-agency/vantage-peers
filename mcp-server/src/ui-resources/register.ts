@@ -17,6 +17,13 @@ import type { ConvexHttpClient } from "convex/browser";
 import { isMasterScope, type OAuthContext } from "../auth.js";
 import { actingOrgOfBearer } from "../authenticatedConvexClient.js";
 import {
+	DOOR_SCOPE,
+	type DoorScopeArgs,
+	resolveDoorScope,
+	verifiedOrgIdOf,
+	verifiedOrgSlugOf,
+} from "../doorScope.js";
+import {
 	listUiResources,
 	readUiResource,
 	type UiResourceCallerIdentity,
@@ -61,15 +68,63 @@ export function isUiResourceReadAdmitted(
  * refusal-is-distinguishable-from-absence.md). Carries the RBAC_DENIED code
  * and the door in both the message and the structured `data`.
  */
-export function uiResourceReadRefusal(uri: string): ProtocolError {
+export function uiResourceReadRefusal(
+	uri: string,
+	reason = "ui-resource-not-tenant-scoped",
+): ProtocolError {
 	// allow-local-identity: cloud-identity exports no producer that judges an MCP caller context (master or Clerk-JWT only); security fail-closed gate, producer tracked in task k1705dcbg3eysk3ymwv8xg2wxd8hd528
 	const primitive = new URL(uri).pathname.replace(/^\/v1\//, "");
 	const door = `resources/read ui://vp/v1/${primitive}`;
 	return new ProtocolError(
 		ProtocolErrorCode.InvalidRequest,
 		`RBAC_DENIED: ${door} is served only to a Clerk-JWT caller, a master caller, or a bearer whose organisation resolved. This is a refusal, NOT an empty resource.`,
-		{ code: "RBAC_DENIED", door, reason: "ui-resource-not-tenant-scoped" },
+		{ code: "RBAC_DENIED", door, reason },
 	);
+}
+
+/** A caller whose scope Convex itself resolves: the fleet master (fleet-wide by right) or a Clerk session. */
+function isConvexScopedCaller(oauthCtx: OAuthContext): boolean {
+	return isMasterScope(oauthCtx) || oauthCtx.clerkJwt !== undefined;
+}
+
+/**
+ * The verified-org half of S-28 for resources/read: a caller that is neither the
+ * master nor a Clerk session must carry a verified organisation SLUG, because the
+ * door claim (`verifiedOrg`) is built from it. A bearer admitted by
+ * {@link isUiResourceReadAdmitted} through its org ID alone, with no slug, would
+ * reach the door claimless: it is refused here, typed, before any Convex query.
+ * Returns null when the read may proceed.
+ */
+export function uiResourceOrgDenial(
+	uri: string,
+	oauthCtx: OAuthContext,
+): ProtocolError | null {
+	if (isConvexScopedCaller(oauthCtx)) return null;
+	if (verifiedOrgSlugOf(oauthCtx) !== undefined) return null;
+	return uiResourceReadRefusal(uri, "verified-org-unresolved");
+}
+
+/**
+ * The claim a primitive's door call carries, resolved from the verified oauthContext
+ * only (never from the resource URI): `verifiedOrg` for every door in DOOR_SCOPE that
+ * takes it, through the same resolver the tools use. The master and a Clerk session
+ * carry none (Convex resolves their scope itself). A door not in DOOR_SCOPE takes no
+ * claim argument yet (R-54) and is sent as it was.
+ */
+export function uiResourceDoorClaim(
+	oauthCtx: OAuthContext,
+	door: string,
+): DoorScopeArgs {
+	if (isConvexScopedCaller(oauthCtx) || !(door in DOOR_SCOPE)) return {};
+	const verifiedOrgSlug = verifiedOrgSlugOf(oauthCtx);
+	const verifiedOrgId = verifiedOrgIdOf(oauthCtx);
+	const resolved = resolveDoorScope(door, undefined, {
+		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+		...(verifiedOrgId !== undefined ? { verifiedOrgId } : {}),
+		hasVerifiedActor: false,
+		seat: { kind: "none" },
+	});
+	return "denied" in resolved ? {} : resolved.args;
 }
 
 export function registerUiResources(
@@ -99,12 +154,21 @@ export function registerUiResources(
 			if (!isUiResourceReadAdmitted(oauthCtx)) {
 				throw uiResourceReadRefusal(uri.toString());
 			}
+			// Admitted implies a context. A bearer with no verified org slug is
+			// refused typed here, before any door call (S-28).
+			if (oauthCtx === undefined) throw uiResourceReadRefusal(uri.toString());
+			const orgDenial = uiResourceOrgDenial(uri.toString(), oauthCtx);
+			if (orgDenial !== null) throw orgDenial;
+			const ctx = oauthCtx;
 			const fetchConvex = async (
 				functionName: string,
 				args: Record<string, unknown>,
 			) => {
+				// The caller's verified claim rides every door that takes one; set
+				// last so a URI-derived argument can never replace it.
+				const scoped = { ...args, ...uiResourceDoorClaim(ctx, functionName) };
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				return convex.query(functionName as any, args as any);
+				return convex.query(functionName as any, scoped as any);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
 			// (server-http.ts) from the verified oauthCtx, as before the extraction.

@@ -1005,56 +1005,56 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"briefing-note.ts|briefingNotes:list": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"diary-entry.ts|diary:get": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"diary-entry.ts|diary:list": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"memory-quote.ts|memories:listMemories": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"messages-feed.ts|messages:listMessages": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"mission-timeline.ts|missions:list": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"tasks-table.ts|tasks:list": {
 		class: "traced",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
+			"ui://vp/v1 resource read: register.ts:154 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"auth.ts|agentCredentials:resolveAgentCredential": {
 		class: "safe",
@@ -1242,7 +1242,7 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 fetch bridge (register.ts:104), the successor of the server-http.ts bridge: isUiResourceReadAdmitted gate at register.ts:96 runs before any Convex query; a resolved bearer's client carries __actingOrg (test/ui-resource-read-org-scoped.test.ts)",
+			"ui://vp/v1 fetch bridge (register.ts:163), the successor of the server-http.ts bridge: isUiResourceReadAdmitted gate at register.ts:154 runs before any Convex query; a resolved bearer's client carries __actingOrg (test/ui-resource-read-org-scoped.test.ts)",
 	},
 	"block_task|tasks:getById": {
 		class: "traced",
