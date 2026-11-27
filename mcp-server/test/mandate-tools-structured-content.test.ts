@@ -182,11 +182,14 @@ describe("accept_mandate", () => {
 	});
 
 	it("a refusal from the door stays an error with no structuredContent", async () => {
-		const h = harness({
-			"mandates:accept": () => {
-				throw new Error("only the fulfiller may accept");
+		const h = harness(
+			{
+				"mandates:accept": () => {
+					throw new Error("only the fulfiller may accept");
+				},
 			},
-		}, VERIFIED_AGENT);
+			VERIFIED_AGENT,
+		);
 		const res = await h.tool("accept_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
@@ -216,11 +219,14 @@ describe("update_mandate", () => {
 	});
 
 	it("a refusal from the door stays an error with no structuredContent", async () => {
-		const h = harness({
-			"mandates:update": () => {
-				throw new Error("only the fulfiller may update");
+		const h = harness(
+			{
+				"mandates:update": () => {
+					throw new Error("only the fulfiller may update");
+				},
 			},
-		}, VERIFIED_AGENT);
+			VERIFIED_AGENT,
+		);
 		const res = await h.tool("update_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
@@ -251,11 +257,14 @@ describe("settle_mandate", () => {
 	});
 
 	it("a refusal from the door stays an error with no structuredContent", async () => {
-		const h = harness({
-			"mandates:settle": () => {
-				throw new Error("only the requester may settle");
+		const h = harness(
+			{
+				"mandates:settle": () => {
+					throw new Error("only the requester may settle");
+				},
 			},
-		}, VERIFIED_AGENT);
+			VERIFIED_AGENT,
+		);
 		const res = await h.tool("settle_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
