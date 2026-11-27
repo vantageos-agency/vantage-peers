@@ -147,12 +147,12 @@ export const getByName = query({
 		if (template === null) return null;
 		// The catalog has no org column; visibility is the MCP's scopeFilterGet rule
 		// for a row with a `createdBy` and no `namespace`: the creator is on the
-		// caller's roster, or the roster is the wildcard. With a claim the scope is
+		// caller's roster, or the scope is fleet-wide (the roster's "*" is carried as `fleetWide`). With a claim the scope is
 		// the verified org's member scope; without one it is the transport's (master)
 		// and nothing narrows.
 		if (
 			args.verifiedOrg !== undefined &&
-			!scope.allowedOrchestrators.includes("*") &&
+			!scope.fleetWide &&
 			!isOrchestratorOnOrgRoster(scope, template.createdBy)
 		) {
 			return null;
