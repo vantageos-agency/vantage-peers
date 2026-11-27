@@ -18,6 +18,21 @@
  *   node scripts/print-tools.mjs --write   # replace the block in README.md
  *   node scripts/print-tools.mjs --check   # exit 1 if README.md has drifted
  *
+ * Exit codes (every mode):
+ *   0  clean (printed, written, or README matches tools/list)
+ *   1  README.md tool reference has drifted (--check only)
+ *   2  could not judge: the server did not boot, gave no tools/list answer,
+ *      the registerTools import failed, the README markers are missing, or the
+ *      option is unknown. A tool that cannot judge never reports "stale".
+ *
+ * Test seams (env, all optional; the defaults are the real build and README):
+ *   PRINT_TOOLS_SERVER_ENTRY     path of the server script to spawn
+ *                                (default dist/server.js)
+ *   PRINT_TOOLS_README           path of the README to read/write
+ *                                (default README.md)
+ *   PRINT_TOOLS_REGISTER_MODULE  path of the module exporting registerTools
+ *                                (default dist/src/tools.js)
+ *
  * The README block sits between `<!-- tools:start -->` and `<!-- tools:end -->`.
  * CONVEX_URL only needs to be a syntactically valid URL: tools/list never
  * reaches Convex.
@@ -29,8 +44,15 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SERVER_ENTRY = resolve(root, "dist", "server.js");
-const README = resolve(root, "README.md");
+const SERVER_ENTRY = process.env.PRINT_TOOLS_SERVER_ENTRY
+	? resolve(process.env.PRINT_TOOLS_SERVER_ENTRY)
+	: resolve(root, "dist", "server.js");
+const README = process.env.PRINT_TOOLS_README
+	? resolve(process.env.PRINT_TOOLS_README)
+	: resolve(root, "README.md");
+const REGISTER_MODULE = process.env.PRINT_TOOLS_REGISTER_MODULE
+	? resolve(process.env.PRINT_TOOLS_REGISTER_MODULE)
+	: resolve(root, "dist", "src", "tools.js");
 const START = "<!-- tools:start -->";
 const END = "<!-- tools:end -->";
 const TIMEOUT_MS = 15_000;
@@ -61,8 +83,29 @@ async function listTools() {
 			}
 		}
 	});
+	// Reject every pending call as soon as the child is gone, instead of
+	// waiting out the timeout.
+	let gone = null;
+	const rejecters = new Set();
+	const fail = (reason) => {
+		gone ??= reason;
+		for (const r of rejecters) r(new Error(gone));
+		rejecters.clear();
+	};
+	child.on("exit", (code, signal) =>
+		fail(
+			`server exited with ${signal ? `signal ${signal}` : `code ${code}`} before answering`,
+		),
+	);
+	child.on("error", (err) => fail(`server could not start (${err.message})`));
+	child.stdin.on("error", () => {});
 	const call = (id, method, params) =>
 		new Promise((res, rej) => {
+			if (gone) return rej(new Error(`${method}: ${gone}`));
+			rejecters.add((e) => {
+				clearTimeout(t);
+				rej(new Error(`${method}: ${e.message}`));
+			});
 			const t = setTimeout(
 				() => rej(new Error(`${method}: no answer in ${TIMEOUT_MS} ms`)),
 				TIMEOUT_MS,
@@ -87,6 +130,9 @@ async function listTools() {
 			`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
 		);
 		const result = await call(2, "tools/list", {});
+		if (!Array.isArray(result?.tools)) {
+			throw new Error("tools/list: answer carries no tools array");
+		}
 		return result.tools;
 	} finally {
 		child.kill();
@@ -97,9 +143,7 @@ async function listTools() {
 // recorded on a stub server. The Convex client is never called at
 // registration time, so an empty object stands in for it.
 async function listRegisteredNames() {
-	const { registerTools } = await import(
-		pathToFileURL(resolve(root, "dist", "src", "tools.js")).href
-	);
+	const { registerTools } = await import(pathToFileURL(REGISTER_MODULE).href);
 	const names = new Set();
 	const record = (name) => {
 		names.add(name);
@@ -189,18 +233,45 @@ function render(tools, registered) {
 }
 
 const mode = process.argv[2];
-const block = render(await listTools(), await listRegisteredNames());
+
+// A discovery failure is never a drift verdict: say what failed and exit 2.
+async function discover(what, fn) {
+	try {
+		return await fn();
+	} catch (err) {
+		process.stderr.write(
+			`could not judge: ${what} (${err instanceof Error ? err.message : String(err)})\n`,
+		);
+		process.exit(2);
+	}
+}
+
+if (mode && mode !== "--write" && mode !== "--check") {
+	process.stderr.write(`could not judge: unknown option ${mode}\n`);
+	process.exit(2);
+}
+
+const tools = await discover(`tools/list from ${SERVER_ENTRY}`, listTools);
+const registered = await discover(
+	`registerTools import from ${REGISTER_MODULE}`,
+	listRegisteredNames,
+);
+const block = render(tools, registered);
 
 if (!mode) {
 	process.stdout.write(`${block}\n`);
 	process.exit(0);
 }
 
-const readme = readFileSync(README, "utf-8");
+const readme = await discover(`read ${README}`, async () =>
+	readFileSync(README, "utf-8"),
+);
 const s = readme.indexOf(START);
 const e = readme.indexOf(END);
 if (s === -1 || e === -1 || e < s) {
-	process.stderr.write(`README.md: markers ${START} / ${END} not found\n`);
+	process.stderr.write(
+		`could not judge: ${README}: markers ${START} / ${END} not found\n`,
+	);
 	process.exit(2);
 }
 const next = `${readme.slice(0, s + START.length)}\n${block}\n${readme.slice(e)}`;
@@ -216,7 +287,4 @@ if (mode === "--write") {
 		process.exit(1);
 	}
 	process.stdout.write("README.md tool reference matches tools/list.\n");
-} else {
-	process.stderr.write(`unknown option ${mode}\n`);
-	process.exit(2);
 }
