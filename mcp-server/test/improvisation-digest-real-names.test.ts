@@ -27,6 +27,13 @@ const master: OAuthContext = {
 	isMaster: true,
 	accessTokenHash: "h",
 	clerkOrgSlug: "vantage",
+	// The door serves the fleet service account only with the acting agent's
+	// verified ID, and the tool refuses a call that has none (S-28).
+	actor: {
+		orgSlug: "vantage",
+		agentName: "dedale",
+		agentId: "agentdedale00000000000000000001",
+	},
 };
 
 async function callDigest(backend: unknown) {

@@ -97,6 +97,13 @@ function masterCtx(): OAuthContext {
 		namespaceWritePrefixes: ["*"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: true,
+		// debate:getRoom serves the service account only with the acting agent's
+		// verified ID, and the tool refuses a call that has none (S-28).
+		actor: {
+			orgSlug: "vantage",
+			agentName: "dedale",
+			agentId: "agentdedale00000000000000000001",
+		},
 	} as OAuthContext;
 }
 

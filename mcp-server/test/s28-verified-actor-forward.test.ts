@@ -176,6 +176,7 @@ const FORWARDS = [
 			createdBy: "dedale",
 		},
 	},
+	{ tool: "list_blocked_on_me", door: "tasks:listBlockedOnMe", args: {} },
 ] as const;
 
 // Doors that judge their caller by the agent ID alone: no ID, no call.
@@ -201,7 +202,6 @@ const REQUIRES = [
 		door: "improvisationDigest:scanWindow",
 		args: { windowDays: 7 },
 	},
-	{ tool: "list_blocked_on_me", door: "tasks:listBlockedOnMe", args: {} },
 ] as const;
 
 for (const t of [...FORWARDS, ...REQUIRES]) {
@@ -231,17 +231,17 @@ for (const t of REQUIRES) {
 	});
 }
 
-describe("list_blocked_on_me: an org-level token that resolved no agent", () => {
-	it("is refused typed before the door (the door would refuse it claimless)", async () => {
+describe("list_blocked_on_me: the caller gate of this read lives in the door", () => {
+	it("an org-level token that resolved no agent is sent no claim: the door refuses it", async () => {
 		const r = await call(
 			"list_blocked_on_me",
 			"tasks:listBlockedOnMe",
 			ORG_TOKEN,
 			{},
 		);
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("verified-actor-required");
-		expect(r.doorCalls).toHaveLength(0);
+		expect(r.doorCalls).toHaveLength(1);
+		expect(r.doorCalls[0].args).not.toHaveProperty("verifiedActor");
+		expect(r.doorCalls[0].args).not.toHaveProperty("verifiedOrg");
 	});
 
 	it("a seat with an agent ID is served, with its actor and no organisation", async () => {

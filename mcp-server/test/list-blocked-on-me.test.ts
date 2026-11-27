@@ -124,11 +124,12 @@ describe("list_blocked_on_me", () => {
 		expect(JSON.parse(r.text)).toEqual(RESULT);
 	});
 
-	it("ORG-LEVEL token: no agent ID, so the door has no reader to serve; it is refused typed before the door", async () => {
+	it("ORG-LEVEL token: forwards no organisation and no name, so Convex has no agent to serve and refuses", async () => {
 		const r = await run(ORG_TOKEN, { recipient: "clio" });
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("verified-actor-required");
-		expect(r.calls).toHaveLength(0);
+		expect(r.calls[0].name).toBe("tasks:listBlockedOnMe");
+		expect(r.calls[0].args).not.toHaveProperty("verifiedOrg");
+		expect(r.calls[0].args).not.toHaveProperty("recipient");
+		expect(r.calls[0].args).not.toHaveProperty("verifiedActor");
 	});
 
 	it("UNRESOLVED org: Convex is never called and the refusal is returned", async () => {
