@@ -76,6 +76,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"tasks:getBulkCompleteRun": { verifiedOrg: "always" },
 	"missions:get": { verifiedOrg: "always" },
 	"recurringTasks:getById": { verifiedOrg: "always" },
+	"missionTemplates:getByName": { verifiedOrg: "always" },
 	"tasks:searchTasksByKeyword": { verifiedOrg: "always" },
 	"tasks:bulkComplete": { verifiedOrg: "always" },
 	"tasks:update": { verifiedPerson: true, verifiedOrg: "always" },

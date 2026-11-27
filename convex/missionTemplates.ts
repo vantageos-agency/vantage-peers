@@ -9,7 +9,13 @@ import {
 } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	isOrchestratorOnOrgRoster,
+	type OrgScope,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
+import { resolveVerifiedOrgScope, verifiedOrgValidator } from "./lib/verifiedOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { taskActorIdFields } from "./lib/actorIds";
 import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
@@ -105,6 +111,18 @@ async function lookupTemplateByName(ctx: QueryCtx, name: string) {
 	return liveOrNull("missionTemplates", template);
 }
 
+// The MCP's scopeFilterGet verdict for a template row, decided on the verified
+// organisation's roster: master, a "*" roster, or `createdBy` on the roster
+// (normalised on both sides, the one predicate isOrchestratorOnOrgRoster).
+function isTemplateVisibleToRoster(
+	scope: OrgScope,
+	template: { createdBy: string },
+): boolean {
+	if (scope.isMaster) return true;
+	if (scope.allowedOrchestrators.includes("*")) return true;
+	return isOrchestratorOnOrgRoster(scope, template.createdBy);
+}
+
 // Public door. Fleet-master only: the catalog is shared fleet-wide with no
 // orgId column, so there is no tenant predicate — same admission as
 // `listNames` and the `upsert`/`softDelete` writes. An ordinary org member is
@@ -117,16 +135,37 @@ async function lookupTemplateByName(ctx: QueryCtx, name: string) {
 // The webhook in convex/http.ts runs with NO identity and uses
 // `getByNameInternal` below.
 export const getByName = query({
-	args: { name: v.string() },
+	args: {
+		name: v.string(),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (R-54, S-35): the read applies that organisation's roster inside the read.
+		// Believed from the service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		// S-35: fleet-master-only door — no per-tenant rows; nothing to scope inside the read.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "missionTemplates:getByName", {
+		// S-35: the caller's verified org is applied inside the read (task k177e1a9wfz01c1f0h4y4bgz3s8k11m6); a claimless master read is kept until the MCP forwards verifiedOrg.
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "missionTemplates:getByName", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 		});
-		return await lookupTemplateByName(ctx, args.name);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missionTemplates:getByName",
+		);
+		const template = await lookupTemplateByName(ctx, args.name);
+		if (template === null) return null;
+		// The catalog has no org column; visibility is the MCP's scopeFilterGet rule
+		// for a row with a `createdBy` and no `namespace`: the creator is on the
+		// caller's roster ("*" is master through the roster, as the filter reads it).
+		// Without a claim the scope is the transport's (master) and nothing narrows.
+		if (args.verifiedOrg !== undefined && !isTemplateVisibleToRoster(scope, template)) {
+			return null;
+		}
+		return template;
 	},
 });
 

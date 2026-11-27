@@ -279,6 +279,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["add_task_dependency", "tasks:getById", org, false],
 	["get_task", "tasks:getById", org, false],
 	["get_mission", "missions:get", org, false],
+	["get_mission_template", "missionTemplates:getByName", org, false],
 	["create_task_in_mission", "missions:get", org, false],
 	["update_recurring_task", "recurringTasks:getById", org, false],
 	["get_recurring_task", "recurringTasks:getById", org, false],
