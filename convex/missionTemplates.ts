@@ -11,7 +11,6 @@ import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
 import {
 	isOrchestratorOnOrgRoster,
-	type OrgScope,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
@@ -111,18 +110,6 @@ async function lookupTemplateByName(ctx: QueryCtx, name: string) {
 	return liveOrNull("missionTemplates", template);
 }
 
-// The MCP's scopeFilterGet verdict for a template row, decided on the verified
-// organisation's roster: master, a "*" roster, or `createdBy` on the roster
-// (normalised on both sides, the one predicate isOrchestratorOnOrgRoster).
-function isTemplateVisibleToRoster(
-	scope: OrgScope,
-	template: { createdBy: string },
-): boolean {
-	if (scope.isMaster) return true;
-	if (scope.allowedOrchestrators.includes("*")) return true;
-	return isOrchestratorOnOrgRoster(scope, template.createdBy);
-}
-
 // Public door. Fleet-master only: the catalog is shared fleet-wide with no
 // orgId column, so there is no tenant predicate — same admission as
 // `listNames` and the `upsert`/`softDelete` writes. An ordinary org member is
@@ -160,9 +147,14 @@ export const getByName = query({
 		if (template === null) return null;
 		// The catalog has no org column; visibility is the MCP's scopeFilterGet rule
 		// for a row with a `createdBy` and no `namespace`: the creator is on the
-		// caller's roster ("*" is master through the roster, as the filter reads it).
-		// Without a claim the scope is the transport's (master) and nothing narrows.
-		if (args.verifiedOrg !== undefined && !isTemplateVisibleToRoster(scope, template)) {
+		// caller's roster, or the roster is the wildcard. With a claim the scope is
+		// the verified org's member scope; without one it is the transport's (master)
+		// and nothing narrows.
+		if (
+			args.verifiedOrg !== undefined &&
+			!scope.allowedOrchestrators.includes("*") &&
+			!isOrchestratorOnOrgRoster(scope, template.createdBy)
+		) {
 			return null;
 		}
 		return template;
