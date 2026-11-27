@@ -143,6 +143,14 @@ describe("missionTemplates:getByName applies the caller's roster inside the read
 		});
 		expect(foreign).toBeNull();
 	});
+	test("WILDCARD: a \"*\" entry names nobody (the MCP presents no roster for a master)", async () => {
+		const t = await world();
+		const r = await asService(t).query(api.missionTemplates.getByName, {
+			name: OWN,
+			callerRoster: ["*"],
+		});
+		expect(r).toBeNull();
+	});
 	test("UNCHANGED: no arguments reads any template as before", async () => {
 		const t = await world();
 		const own = await asService(t).query(api.missionTemplates.getByName, { name: OWN });
@@ -154,7 +162,7 @@ describe("missionTemplates:getByName applies the caller's roster inside the read
 	});
 	test("PARITY: the door's verdict equals the MCP scopeFilterGet verdict", async () => {
 		const t = await world();
-		for (const roster of [[A_SEAT], [B_SEAT], [], ["Seat-A", "x"], ["*"]]) {
+		for (const roster of [[A_SEAT], [B_SEAT], [], ["Seat-A", "x"]]) {
 			const mcpCtx = {
 				scope: "team-member",
 				fromAllowList: roster,

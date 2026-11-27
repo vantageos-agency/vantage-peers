@@ -2810,6 +2810,12 @@ export function registerTools(
 	// nothing in the server mutates it after authentication, so every door call
 	// reads the same facts and identity is derived at this one point.
 	const verifiedOrgSlug = verifiedOrgOf();
+	// The roster a non-master bearer presents to a door that applies it inside the
+	// read (get_mission_template); the master presents none.
+	const presentedRoster =
+		oauthCtx !== undefined && !isMasterScope(oauthCtx)
+			? oauthCtx.fromAllowList
+			: undefined;
 	const doorFacts: DoorScopeFacts = {
 		...(personActorOf(oauthCtx) !== undefined &&
 		oauthCtx?.accessTokenHash !== undefined
@@ -12049,9 +12055,8 @@ export function registerTools(
 				const templateScope = doorScopeArgs("missionTemplates:getByName", undefined);
 				const rosterScope =
 					templateScope.verifiedOrg === undefined &&
-					oauthCtx !== undefined &&
-					!isMasterScope(oauthCtx)
-						? { callerRoster: [...oauthCtx.fromAllowList] }
+					presentedRoster !== undefined
+						? { callerRoster: presentedRoster }
 						: {};
 				const template = await convex.query(
 					"missionTemplates:getByName" as any,
