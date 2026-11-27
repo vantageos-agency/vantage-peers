@@ -187,6 +187,7 @@ async function seedRecurring(
 		const now = Date.now();
 		for (let i = 0; i < n; i++) {
 			await ctx.db.insert("recurringTasks", {
+				project: "p",
 				title: `${o.title ?? "rec"} ${i}`,
 				assignedTo: "sigma",
 				priority: "low",

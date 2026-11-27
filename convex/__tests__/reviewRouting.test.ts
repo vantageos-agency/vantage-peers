@@ -79,6 +79,7 @@ const svc = (t: T) => t.withIdentity({ subject: "test-service-account-user-id" }
 
 const openReview = (t: T, assignedTo?: string) =>
 	t.mutation(internal.tasks.createOrUpdateReviewTask, {
+		project: "p",
 		repoFullName: REPO,
 		prNumber: PR_NUMBER,
 		prTitle: "some change",

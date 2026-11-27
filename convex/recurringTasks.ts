@@ -29,6 +29,11 @@ import {
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	requireProject,
+	taskProjectRefusal,
+	trimmedProjectOrNull,
+} from "./lib/taskProject";
 import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -297,6 +302,11 @@ export const create = mutation({
 			"recurringTasks:create",
 		);
 
+		// Last check before the write (a caller refused for who they are learns
+		// nothing about the project rule). Every task this schedule spawns inherits
+		// this project, so a schedule without one could only ever spawn refusals.
+		const project = requireProject(args.project, "recurringTasks:create");
+
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
 
@@ -305,7 +315,7 @@ export const create = mutation({
 			description: args.description,
 			assignedTo: args.assignedTo,
 			priority: args.priority,
-			project: args.project,
+			project,
 			tags: args.tags,
 			cronExpression: args.cronExpression,
 			lastCreatedAt: undefined,
@@ -564,7 +574,9 @@ export const update = mutation({
 			);
 		}
 		if (args.priority !== undefined) patch.priority = args.priority;
-		if (args.project !== undefined) patch.project = args.project;
+		if (args.project !== undefined) {
+			patch.project = requireProject(args.project, "recurringTasks:update");
+		}
 		if (args.tags !== undefined) patch.tags = args.tags;
 		if (args.cronExpression !== undefined) {
 			patch.cronExpression = args.cronExpression;
@@ -1003,12 +1015,33 @@ export const processDueTasks = internalMutation({
 					continue;
 				}
 
+				// A task is never inserted without a project, and none is invented. A
+				// schedule written before the project was required (or whose project was
+				// blanked) is SKIPPED, loudly and on the row, until someone sets one
+				// through recurringTasks:update. nextRunAt advances like any skip.
+				const project = trimmedProjectOrNull(recurring.project);
+				if (project === null) {
+					const reason = taskProjectRefusal("recurringTasks:processDueTasks");
+					console.error(
+						`Recurring tasks: skipped schedule ${recurring._id} — ${reason}`,
+					);
+					await ctx.db.patch(recurring._id, {
+						nextRunAt,
+						updatedAt: now,
+						lastSkippedAt: now,
+						skippedRuns: (recurring.skippedRuns ?? 0) + 1,
+						lastSkipReason: reason,
+					});
+					skipped++;
+					continue;
+				}
+
 				const insertedId = await ctx.db.insert("tasks", {
 					title: recurring.title,
 					description: recurring.description,
 					assignedTo: recurring.assignedTo,
 					priority: recurring.priority,
-					project: recurring.project,
+					project,
 					tags: recurring.tags,
 					status: "todo",
 					createdBy: recurring.createdBy,

@@ -104,6 +104,7 @@ describe("a seat reaching Convex as the service account", () => {
 
 	test("WITH verifiedActor the assignee resolves in the agent's org, the creator is its ID", async () => {
 		const id = await svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			...args,
 			verifiedActor: { agentId: clioA, orgSlug: "org-a" },
 		});
@@ -115,6 +116,7 @@ describe("a seat reaching Convex as the service account", () => {
 	test("a clio of ANOTHER org cannot assign to org-a's vera", async () => {
 		const err = await svc
 			.mutation(api.recurringTasks.create, {
+				project: "p",
 				...args,
 				verifiedActor: { agentId: clioB, orgSlug: "org-b" },
 			})
@@ -132,6 +134,7 @@ describe("a seat reaching Convex as the service account", () => {
 	test("a verifiedActor claiming org-a for org-b's clio is refused ORG_MISMATCH", async () => {
 		const err = await svc
 			.mutation(api.recurringTasks.create, {
+				project: "p",
 				...args,
 				verifiedActor: { agentId: clioB, orgSlug: "org-a" },
 			})
@@ -160,6 +163,7 @@ describe("the schedule doors judge a forwarded agent by ID", () => {
 	const get = (id: Id<"recurringTasks">) => t.run((ctx) => ctx.db.get(id));
 	const createdByA = () =>
 		svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			...args,
 			verifiedActor: actorA(),
 		});
@@ -202,6 +206,7 @@ describe("the schedule doors judge a forwarded agent by ID", () => {
 	test("a row without actor IDs is refused to an agent with a named reason, and served to the service account", async () => {
 		const id = await t.run((ctx) =>
 			ctx.db.insert("recurringTasks", {
+				project: "p",
 				title: "legacy",
 				assignedTo: "clio",
 				createdBy: "clio",
@@ -229,6 +234,7 @@ describe("the schedule doors judge a forwarded agent by ID", () => {
 	test("a row stamped for another org is refused even when it names the caller's ID", async () => {
 		const id = await t.run((ctx) =>
 			ctx.db.insert("recurringTasks", {
+				project: "p",
 				title: "forged",
 				assignedTo: "clio",
 				assignedToId: clioA,

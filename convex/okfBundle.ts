@@ -40,6 +40,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { requireProject } from "./lib/taskProject";
 import { v } from "convex/values";
 import type { DatabaseReader } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
@@ -771,6 +772,8 @@ export const _insertImportedTask = internalMutation({
 		namespace: v.string(),
 		title: v.string(),
 		description: v.optional(v.string()),
+		// Required: a task is never imported without the billing line it belongs to.
+		project: v.string(),
 		assignedTo: v.string(),
 		priority: v.union(
 			v.literal("urgent"),
@@ -808,9 +811,14 @@ export const _insertImportedTask = internalMutation({
 				.first();
 			if (existing !== null) return existing._id;
 		}
+		// Before the write (a replay that dedups above inserts nothing): an import
+		// door that cannot name the project refuses, with the same code every task
+		// door uses.
+		const project = requireProject(args.project, "okfBundle:_insertImportedTask");
 		return await ctx.db.insert("tasks", {
 			title: args.title,
 			description: args.description,
+			project,
 			assignedTo: args.assignedTo,
 			priority: args.priority,
 			status: args.status,

@@ -126,6 +126,7 @@ describe("A.6 createDeployTaskWithDedup — Fix 1 + Fix 3", () => {
 	test("non-matching title pattern falls through to plain insert (no dedup attempt)", async () => {
 		const t = createTestConvex();
 		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			project: "vantage-memory",
 			title: "Generic non-deploy title",
 			description: "non-pattern",
 			assignedTo: "sigma",

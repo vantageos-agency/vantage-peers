@@ -1,3 +1,4 @@
+import { requireProject } from "./lib/taskProject";
 import {
 	type ActingPrincipal,
 	assertOrgAdmin,
@@ -909,21 +910,6 @@ async function linkedAssigneeOf(
 		: undefined;
 }
 
-// A task carries a project, or it is not created (task
-// k17c7mz2n765wacn6qxcgy00vn8hsa58): billing groups done tasks by project, and a
-// task without one lands in noProjectCount, outside every invoice line. Refused
-// with a stable code naming the field. Returns the trimmed value, so "p" and
-// "p " never split one project into two billing lines.
-function requireProject(project: string | undefined, door: string): string {
-	const trimmed = project?.trim() ?? "";
-	if (trimmed === "") {
-		throw new ConvexError(
-			`TASK_PROJECT_REQUIRED: ${door} needs a non-empty \`project\` (the billing line this task belongs to) — ${JSON.stringify({ field: "project", door })}`,
-		);
-	}
-	return trimmed;
-}
-
 export const create = mutation({
 	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
@@ -1157,7 +1143,12 @@ export const createForWebhook = internalMutation({
 		// station may cancel as their creator (taskClosureConfig
 		// "automationTaskCancellers"). Deliberately NOT "automation": that
 		// literal exempts a row from the billing closure gate.
-		return await insertTask(ctx, args, undefined, "automation-webhook");
+		return await insertTask(
+			ctx,
+			{ ...args, project: requireProject(args.project, "tasks:createForWebhook") },
+			undefined,
+			"automation-webhook",
+		);
 	},
 });
 
@@ -5177,7 +5168,16 @@ export const createDeployTaskWithDedup = internalMutation({
 		prMergedAt: v.optional(v.number()),
 	},
 	returns: v.union(v.id("tasks"), v.null()),
-	handler: async (ctx, args) => {
+	handler: async (ctx, rawArgs) => {
+		// Both inserts below write `project` from these args; refused up front so
+		// neither path (parsed title / free-form title) can write a project-less row.
+		const args = {
+			...rawArgs,
+			project: requireProject(
+				rawArgs.project,
+				"tasks:createDeployTaskWithDedup",
+			),
+		};
 		const parsed = parseDeployTitle(args.title);
 		if (!parsed) {
 			// Unexpected title format — fall through to plain create with no dedup.
@@ -6391,6 +6391,7 @@ export const billingSummaryByProject = query({
 		let noProjectCount = 0;
 		let noDurationCount = 0;
 		let invalidDurationTaskCount = 0;
+		let noDurationListCut = false;
 		const noDurationTasks: Array<{
 			taskId: Id<"tasks">;
 			assignedTo: string;
@@ -6407,17 +6408,20 @@ export const billingSummaryByProject = query({
 			}
 			if (task.actualMinutes === undefined) {
 				noDurationCount++;
-				if (
-					args.listNoDuration === true &&
-					noDurationTasks.length < BILLING_NO_DURATION_LIST_CAP &&
-					task.completedAt !== undefined
-				) {
-					noDurationTasks.push({
-						taskId: task._id,
-						assignedTo: task.assignedTo,
-						project: task.project,
-						completedAt: task.completedAt,
-					});
+				// A row with no completedAt cannot be listed (the list entry's
+				// completedAt is a number) and is not "cut by the cap": only a
+				// listable row that finds the list full sets the flag.
+				if (args.listNoDuration === true && task.completedAt !== undefined) {
+					if (noDurationTasks.length < BILLING_NO_DURATION_LIST_CAP) {
+						noDurationTasks.push({
+							taskId: task._id,
+							assignedTo: task.assignedTo,
+							project: task.project,
+							completedAt: task.completedAt,
+						});
+					} else {
+						noDurationListCut = true;
+					}
 				}
 				continue;
 			}
@@ -6454,7 +6458,7 @@ export const billingSummaryByProject = query({
 			...(args.listNoDuration === true
 				? {
 						noDurationTasks,
-						noDurationTasksTruncated: noDurationCount > noDurationTasks.length,
+						noDurationTasksTruncated: noDurationListCut,
 					}
 				: {}),
 		};
@@ -6914,11 +6918,17 @@ export const createOrUpdateReviewTask = internalMutation({
 		// REVIEWER_UNRESOLVED: no task is created — never one on the author.
 		// The caller (convex/http.ts) surfaces it to the coordinator channel(s).
 		if (assignedTo === null) return null;
+		// An already-open review task was updated above and keeps its own project;
+		// a NEW row is never written without one.
+		const project = requireProject(
+			args.project,
+			"tasks:createOrUpdateReviewTask",
+		);
 
 		const insertedId = await ctx.db.insert("tasks", {
 			title,
 			description: args.description,
-			project: args.project,
+			project,
 			assignedTo,
 			priority: args.priority,
 			status: "todo" as const,

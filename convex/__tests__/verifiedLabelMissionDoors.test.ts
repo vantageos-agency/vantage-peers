@@ -192,6 +192,7 @@ const scheduleArgs = (createdBy: string) => ({
 
 const createSchedule = (w: World, createdBy: string, as: Id<"agents">) =>
 	svc(w.t).mutation(api.recurringTasks.create, {
+		project: "p",
 		...scheduleArgs(createdBy),
 		...proofOf(as, w.orgSlug),
 	} as never);

@@ -167,6 +167,7 @@ describe("createDeployTaskWithDedup bundled-deploy dedup -- githubRepoMapping re
 		// Pre-fix, the unbounded `.collect()` alone reads 61 documents and
 		// throws before the dedup check (or the task insert) ever runs.
 		const result = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			project: "size-bound-probe-dedup-project",
 			title: "[Deploy] PR #9998 merged — deploy size-bound-probe-dedup-project to prod",
 			assignedTo: "sigma",
 			priority: "urgent" as const,

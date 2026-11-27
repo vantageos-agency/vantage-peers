@@ -307,6 +307,7 @@ describe("resolveStaleDeployTasks / createDeployTaskWithDedup read only the task
 		await seed(t);
 		await stampDeploy(t, "org-b/repo", "b-sha");
 		const id = await t.mutation(internal.tasks.createDeployTaskWithDedup, {
+			project: "p",
 			title: DEPLOY_TITLE,
 			assignedTo: ORCH,
 			priority: "low",

@@ -205,6 +205,7 @@ const DRIVERS = {
 	recurringTasks: async (t) => {
 		await seedAgents(t, [[ACME.slug, SEAT]]);
 		return await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "r",
 			assignedTo: SEAT,
 			priority: "low",

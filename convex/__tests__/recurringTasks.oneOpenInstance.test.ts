@@ -47,6 +47,7 @@ async function seedSchedule(
 	const past = Date.now() - 60_000;
 	return await t.run(async (ctx) =>
 		ctx.db.insert("recurringTasks", {
+			project: "p",
 			title: opts.title ?? "Daily routine",
 			assignedTo: opts.assignedTo ?? "sigma",
 			priority: "medium" as const,

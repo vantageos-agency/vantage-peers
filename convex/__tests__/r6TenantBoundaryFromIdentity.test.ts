@@ -138,6 +138,7 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 		await seed(t);
 		await expect(
 			asOrgA(t).mutation(api.recurringTasks.create, {
+				project: "p",
 				...base,
 				assignedTo: "seat-a",
 				createdBy: "seat-b",
@@ -145,6 +146,7 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 		).rejects.toThrow(/CALLER_IDENTITY_MISMATCH|RBAC_DENIED/);
 		await expect(
 			asOrgA(t).mutation(api.recurringTasks.create, {
+				project: "p",
 				...base,
 				assignedTo: "seat-b",
 				createdBy: "seat-a",
@@ -158,6 +160,7 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 		await seed(t);
 		await expect(
 			asOrgA(t).mutation(api.recurringTasks.create, {
+				project: "p",
 				...base,
 				assignedTo: "seat-a",
 				createdBy: "seat-a",
@@ -173,6 +176,7 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 		// M10h: the assignee is an agent of the org.
 		await seedAgents(t, [["org-a", "seat-a2"]]);
 		const id = await asOrgA(t).mutation(api.recurringTasks.create, {
+			project: "p",
 			...base,
 			assignedTo: "seat-a2",
 			createdBy: "seat-a",

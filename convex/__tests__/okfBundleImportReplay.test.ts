@@ -184,6 +184,7 @@ describe("R-18 import replay idempotence", () => {
 		const contentHash = hash(`${title}\n${description}`);
 
 		const first = await t.mutation(internal.okfBundle._insertImportedTask, {
+			project: "p",
 			namespace: ns,
 			title,
 			description,
@@ -195,6 +196,7 @@ describe("R-18 import replay idempotence", () => {
 			now: NOW,
 		});
 		const second = await t.mutation(internal.okfBundle._insertImportedTask, {
+			project: "p",
 			namespace: ns,
 			title,
 			description,
@@ -232,6 +234,7 @@ describe("R-18 idempotency key is tenant-scoped — cross-tenant deny", () => {
 		const contentHash = hash(`${title}\n${description}`);
 
 		const idA = await t.mutation(internal.okfBundle._insertImportedTask, {
+			project: "p",
 			namespace: "team/tenant-a",
 			title,
 			description,
@@ -243,6 +246,7 @@ describe("R-18 idempotency key is tenant-scoped — cross-tenant deny", () => {
 			now: NOW,
 		});
 		const idB = await t.mutation(internal.okfBundle._insertImportedTask, {
+			project: "p",
 			namespace: "team/tenant-b",
 			title,
 			description,

@@ -79,6 +79,7 @@ async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
 	return await t
 		.withIdentity({ subject: "test-service-account-user-id" })
 		.mutation(api.recurringTasks.create, {
+		project: "p",
 		title: "daily scan",
 		assignedTo: SHARED,
 		priority: "medium",

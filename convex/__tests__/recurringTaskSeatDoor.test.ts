@@ -85,6 +85,7 @@ const seat = (org: string, agentId: Id<"agents">) => ({
 /** A schedule created BY mimir (seat of org A), assigned to vera. */
 const createdByMimir = () =>
 	svc.mutation(api.recurringTasks.create, {
+		project: "p",
 		title: "relance",
 		assignedTo: "vera",
 		priority: "medium",

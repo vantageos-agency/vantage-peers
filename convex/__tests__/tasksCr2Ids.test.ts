@@ -76,6 +76,7 @@ async function setup() {
 		});
 	});
 	const taskId = (await t.mutation(internal.tasks.createOrUpdateReviewTask, {
+		project: "p",
 		repoFullName: REPO,
 		prNumber: 7,
 		prTitle: "a change",

@@ -68,6 +68,7 @@ describe("recurringTasks.list pagination — createdBefore applied after unbound
 		} as Parameters<typeof t.withIdentity>[0]);
 		for (let i = 0; i < TOTAL; i++) {
 			const id: string = await tMaster.mutation(api.recurringTasks.create, {
+				project: "p",
 				title: `sweep recurring ${i}`,
 				assignedTo,
 				priority: "medium",

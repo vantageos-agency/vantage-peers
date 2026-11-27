@@ -423,6 +423,7 @@ describe("tasks:update — assignedTo reassignment (assignee)", () => {
 describe("recurringTasks — one roster rule (normalised, '*' names nobody)", () => {
 	const args = (assignedTo: string) => ({
 		title: "r",
+		project: "p",
 		assignedTo,
 		priority: "medium" as const,
 		cronExpression: "0 9 * * *",

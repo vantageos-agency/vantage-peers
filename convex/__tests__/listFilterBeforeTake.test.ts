@@ -242,6 +242,7 @@ async function seedRecurring() {
 	const seeded: Array<{ _id: string; active: boolean }> = [];
 	for (let i = 0; i < 12; i++) {
 		const id: string = await master.mutation(api.recurringTasks.create, {
+			project: "p",
 			title: `fixture ${i}`,
 			assignedTo: ASSIGNEE,
 			priority: "medium",

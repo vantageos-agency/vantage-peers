@@ -1,3 +1,4 @@
+import { requireProject } from "./lib/taskProject";
 import { sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
@@ -528,6 +529,11 @@ export const instantiateTemplateIntoMission = mutation({
 			});
 		}
 
+		// Every task inherits the mission's project (billing line). A mission whose
+		// project is empty cannot give one, and none is invented: refused before
+		// the first insert.
+		const taskProject = requireProject(mission.project, door);
+
 		// Pass 1: insert all tasks, record ids by step index
 		const taskIds: Array<string & { __tableName: "tasks" }> = [];
 
@@ -543,7 +549,7 @@ export const instantiateTemplateIntoMission = mutation({
 				assignedTo: step.assignedTo ?? mission.pilot,
 				assignedToInstance: step.assignedToInstance,
 				missionId: args.missionId,
-				project: mission.project,
+				project: taskProject,
 				status: "todo",
 				priority: mission.priority,
 				createdBy,
