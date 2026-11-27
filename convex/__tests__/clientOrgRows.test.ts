@@ -236,6 +236,98 @@ describe("migrations/moveRepoMappingToOrg", () => {
 	});
 });
 
+describe("migrations/moveRepoMappingToOrg — review blockers (M1, M2)", () => {
+	test("M2: an ID the input omits for a role is CLEARED on the moved row, and revert restores it byte for byte", async () => {
+		const t = makeT();
+		await seed(t);
+		const opEta = await agentId(t, "org-op", "eta");
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("githubRepoMapping")
+				.withIndex("by_repo", (q) => q.eq("repo", "ops/client-ws"))
+				.unique();
+			if (row === null) throw new Error("seed row missing");
+			await ctx.db.patch(row._id, { reviewerAgentId: opEta, fallbackReviewerAgentId: opEta });
+		});
+		const prior = await rowOf(t, "ops/client-ws");
+		expect(prior?.reviewerAgentId).toBe(opEta);
+		const r = await t.mutation(internal.migrations.moveRepoMappingToOrg.run, {
+			apply: true,
+			rows: [
+				{
+					repo: "ops/client-ws",
+					toClerkOrgId: toC,
+					orchestratorAgentId: await agentId(t, "org-c", "atlas"),
+				},
+			],
+		});
+		expect(r.moved).toHaveLength(1);
+		const moved = await rowOf(t, "ops/client-ws");
+		expect(moved?.orgId).toBe("org-c");
+		expect(moved?.reviewerAgentId).toBeUndefined();
+		expect(moved?.fallbackReviewerAgentId).toBeUndefined();
+		expect("reviewerAgentId" in (moved ?? {})).toBe(false);
+		const back = await t.mutation(internal.migrations.moveRepoMappingToOrg.revert, { moved: r.moved });
+		expect(back.reverted).toBe(1);
+		expect(await rowOf(t, "ops/client-ws")).toEqual(prior);
+	});
+
+	test("M1: one apply naming the same repo twice refuses BOTH entries (duplicate-repo) and writes nothing", async () => {
+		const t = makeT();
+		await seed(t);
+		const prior = await rowOf(t, "ops/client-ws");
+		const r = await t.mutation(internal.migrations.moveRepoMappingToOrg.run, {
+			apply: true,
+			rows: [
+				{
+					repo: "ops/client-ws",
+					toClerkOrgId: toC,
+					orchestratorAgentId: await agentId(t, "org-c", "atlas"),
+				},
+				{
+					repo: "ops/client-ws",
+					toClerkOrgId: testClerkOrgId("org-x"),
+					orchestratorAgentId: await agentId(t, "org-x", "atlas"),
+				},
+			],
+		});
+		expect(r.refused.map((x) => [x.repo, x.reason])).toEqual([
+			["ops/client-ws", "duplicate-repo"],
+			["ops/client-ws", "duplicate-repo"],
+		]);
+		expect(r.moved).toEqual([]);
+		expect(await rowOf(t, "ops/client-ws")).toEqual(prior);
+	});
+
+	test("M1: revert of a hand-built two-step moved list lands on the FIRST prior", async () => {
+		const t = makeT();
+		await seed(t);
+		const first = await rowOf(t, "ops/client-ws");
+		if (first === null) throw new Error("seed row missing");
+		const pick = (r: typeof first) => ({
+			orgId: r.orgId,
+			clerkOrgId: r.clerkOrgId,
+			orchestratorAgentId: r.orchestratorAgentId,
+			reviewerAgentId: r.reviewerAgentId,
+			fallbackReviewerAgentId: r.fallbackReviewerAgentId,
+		});
+		const priorA = pick(first);
+		const priorB = { ...priorA, orgId: "org-c", clerkOrgId: toC };
+		await t.run(async (ctx) =>
+			ctx.db.patch(first._id, { orgId: "org-x", clerkOrgId: testClerkOrgId("org-x") }),
+		);
+		await t.mutation(internal.migrations.moveRepoMappingToOrg.revert, {
+			moved: [
+				{ id: first._id, prior: priorA },
+				{ id: first._id, prior: priorB },
+			],
+		});
+		const after = await rowOf(t, "ops/client-ws");
+		expect(after?.orgId).toBe("org-op");
+		expect(after?.clerkOrgId).toBe(first.clerkOrgId);
+	});
+});
+
 describe("githubRepoMapping:routedElsewhere", () => {
 	test("ADMIT: the operator org learns which of its listed repos have a row in ANOTHER org", async () => {
 		const t = makeT();
