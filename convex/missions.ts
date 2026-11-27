@@ -21,7 +21,9 @@ import {
 	verifiedActorValidator,
 } from "./lib/auth";
 import {
+	requireVerifiedOrgFromServiceAccount,
 	resolveVerifiedOrg,
+	resolveVerifiedOrgScope,
 	serviceAccountWriteOrg,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -408,7 +410,13 @@ export const create = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { missionId: v.string() },
+	args: {
+		missionId: v.string(),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (R-54, S-35): the read runs under that org's member scope. Believed from
+		// the service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("missions"),
@@ -451,6 +459,14 @@ export const get = query({
 			"missionId",
 			"Use the full 32-char missionId returned by list_missions or create_mission.",
 		);
+		// Identity first: a claimless service account is refused before the row is
+		// read, so the id is never an existence oracle for it.
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"missions:get",
+		);
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) return null;
 		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
@@ -460,7 +476,12 @@ export const get = query({
 		// organisation. The fleet master reads every row.
 		// refuseWithoutThrow: a reactively-subscribed public read refuses with a
 		// typed null rather than a throw (R-50/R-51).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missions:get",
+		);
 		const verdict = tenantVerdict(scope, mission);
 		if (verdict === "other") return null;
 		if (verdict === "own") {

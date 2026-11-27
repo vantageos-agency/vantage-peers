@@ -120,6 +120,7 @@ export const getByName = query({
 	args: { name: v.string() },
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
+		// S-35: fleet-master-only door — no per-tenant rows; nothing to scope inside the read.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "missionTemplates:getByName", {
 			alsoRefusePreOrg: true,

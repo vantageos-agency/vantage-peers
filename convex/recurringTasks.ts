@@ -27,6 +27,11 @@ import {
 	requireVerifiedActorPrincipal,
 } from "./lib/actingPrincipal";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
+import {
+	requireVerifiedOrgFromServiceAccount,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import {
@@ -1122,7 +1127,13 @@ export const processDueTasks = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getById = query({
-	args: { recurringTaskId: v.string() },
+	args: {
+		recurringTaskId: v.string(),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (R-54, S-35): the read runs under that org's member scope. Believed from
+		// the service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.recurringTasks\.getById' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Its callers are MCP tools via imperative convex.query (mcp-server/src/tools.ts:6938, :10084), not subscriptions. R-50 declared divergence (a claim, verified against that enumeration).
 		// REFUSAL SHAPE, chosen deliberately: a refusal RAISES; it is never
@@ -1145,7 +1156,19 @@ export const getById = query({
 				"AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot read a recurring task",
 			);
 		}
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+		const transportScope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+		// R-54: a claimless service-account call is refused, never served as master.
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"recurringTasks:getById",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"recurringTasks:getById",
+		);
 
 		const recurringTaskId = requireId(
 			ctx,

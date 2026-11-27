@@ -342,6 +342,7 @@ export const getByRepoNumber = query({
 		issueNumber: v.number(),
 	},
 	handler: async (ctx, args) => {
+		// S-35: fleet-master-only door — no per-tenant rows; nothing to scope inside the read.
 		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
 		// carries no orgId/tenant column (fleet-internal), so there is no per-org
 		// slice to scope a member to: serving any member would serve every
@@ -584,6 +585,7 @@ export const getStats = query({
 		total: v.number(),
 	}),
 	handler: async (ctx, args) => {
+		// S-35: fleet-master-only door — no per-tenant rows; nothing to scope inside the read.
 		const stats = { open: 0, in_progress: 0, fixed: 0, verified: 0, closed: 0, total: 0 };
 
 		// Fail-closed READ counterpart of this file's own master-only WRITE gate

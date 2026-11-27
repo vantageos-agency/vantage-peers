@@ -78,6 +78,7 @@ import {
 } from "./lib/personPrincipal";
 import {
 	assertRowInVerifiedOrg,
+	requireVerifiedOrgFromServiceAccount,
 	resolveDoorVerifiedOrg,
 	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
@@ -1279,7 +1280,13 @@ export const getById = query({
 	// in prod (`Server Error`, `error.data` undefined — measured). Narrowing
 	// inside the handler via requireId() throws a ConvexError whose payload
 	// survives redaction. Same contract as PR #1069 (markAsRead), on a read.
-	args: { taskId: v.string() },
+	args: {
+		taskId: v.string(),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (R-54, S-35): the read runs under that org's member scope. Believed from
+		// the service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("tasks"),
@@ -1390,7 +1397,19 @@ export const getById = query({
 		// used to DROP: its args window was cut at the word "handler" inside the
 		// comment above `args`, so it matched no org-shaped field and never
 		// appeared in the count (scripts/check-public-fn-org-arg-identity.py).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: a claimless service-account call is refused, never served as master.
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"tasks:getById",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:getById",
+		);
 		if (!isRowVisibleToScope(scope, task)) return null;
 		return withDeliverableDivergence(task);
 	},
@@ -6179,7 +6198,13 @@ export const bulkCompleteContinue = internalMutation({
  * answered with the bytes of an absence. An unknown id is `null` too.
  */
 export const getBulkCompleteRun = query({
-	args: { bulkRunId: v.string() },
+	args: {
+		bulkRunId: v.string(),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (R-54, S-35): the read runs under that org's member scope. Believed from
+		// the service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(
 		v.object({
 			bulkRunId: v.string(),
@@ -6200,8 +6225,20 @@ export const getBulkCompleteRun = query({
 	),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated 2026-10-05 with `grep -rn "getBulkCompleteRun" convex mcp-server/src` -> the only caller is the MCP tool get_bulk_complete_run (imperative convex.query); the dashboard has no reference. The anonymous refusal stays a RAISE; no render exists for a throw to crash.
-		const scope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
-		requireResolvedCaller(scope, "tasks:getBulkCompleteRun");
+		const transportScope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
+		requireResolvedCaller(transportScope, "tasks:getBulkCompleteRun");
+		// R-54: a claimless service-account call is refused, never served as master.
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"tasks:getBulkCompleteRun",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:getBulkCompleteRun",
+		);
 		const row = await ctx.db
 			.query("bulk_complete_runs")
 			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
