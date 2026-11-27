@@ -215,6 +215,8 @@ export const getRoute = query({
 // other org's row. It applies to the OPERATOR org only (a client org is told
 // `applicable: false`, a typed answer, never an empty absence); getRoute is untouched
 // and keeps answering absent for another org's row.
+// CAP: only the first 500 DISTINCT names of `repos` are judged; the rest are silently not
+// looked at. A caller with more asks in batches of 500 and merges (check_repo_routing does).
 // isolation-contract: no reactive subscriber. New door, so 0 consumers by construction;
 // re-enumerate before adding one:
 //   grep -rn "api\.githubRepoMapping\.routedElsewhere" --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
