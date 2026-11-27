@@ -28,7 +28,6 @@ import {
 } from "./lib/actingPrincipal";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import {
-	requireVerifiedOrgFromServiceAccount,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -1156,13 +1155,8 @@ export const getById = query({
 				"AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot read a recurring task",
 			);
 		}
+		// S-35 expand: claimless service-account read kept until the MCP forwards verifiedOrg (contract step: refuse it, task k17d4vqbcwfz297b3p9g639av18k1pj1 follow-up).
 		const transportScope = await withOrgScope(ctx, { allowNoIdentityMaster: false });
-		// R-54: a claimless service-account call is refused, never served as master.
-		requireVerifiedOrgFromServiceAccount(
-			transportScope,
-			args.verifiedOrg,
-			"recurringTasks:getById",
-		);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,

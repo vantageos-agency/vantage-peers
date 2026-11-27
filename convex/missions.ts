@@ -21,7 +21,6 @@ import {
 	verifiedActorValidator,
 } from "./lib/auth";
 import {
-	requireVerifiedOrgFromServiceAccount,
 	resolveVerifiedOrg,
 	resolveVerifiedOrgScope,
 	serviceAccountWriteOrg,
@@ -459,14 +458,8 @@ export const get = query({
 			"missionId",
 			"Use the full 32-char missionId returned by list_missions or create_mission.",
 		);
-		// Identity first: a claimless service account is refused before the row is
-		// read, so the id is never an existence oracle for it.
+		// S-35 expand: claimless service-account read kept until the MCP forwards verifiedOrg (contract step: refuse it, task k17d4vqbcwfz297b3p9g639av18k1pj1 follow-up).
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireVerifiedOrgFromServiceAccount(
-			transportScope,
-			args.verifiedOrg,
-			"missions:get",
-		);
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) return null;
 		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
