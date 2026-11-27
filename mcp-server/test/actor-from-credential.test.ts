@@ -1041,6 +1041,7 @@ describe("S2 acting — the wrapper itself derives a `from`-kind argument the ca
 			"probe",
 			"probe",
 			{ createdBy: z.string().optional() },
+			{ outputSchema: {} },
 			async (args: Record<string, unknown>) => {
 				seen.push(args);
 				return { content: [{ type: "text", text: "ok" }] };
