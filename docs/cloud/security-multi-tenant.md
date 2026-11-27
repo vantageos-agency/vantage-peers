@@ -191,7 +191,7 @@ Correspondance exacte ou hiérarchique : `project/<client-org>/sub` passe si le 
 | `fromAllowList` | `[]` (no identity filter — team members write under their own userId) |
 | `isMaster` | `false` |
 
-Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `CLERK_DOMAIN/.well-known/jwks.json` (10-min in-process cache) and populates the above context. The Convex layer enforces the same boundary via `memoriesScoped.ts` (`assertNamespaceAllowed`). Cross-tenant reads and writes emit `AUTH_NAMESPACE_DENIED`. Unregistered or inactive orgs are also fail-closed with `AUTH_NAMESPACE_DENIED`.
+Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `CLERK_DOMAIN/.well-known/jwks.json` (10-min in-process cache) and populates the above context. `CLERK_DOMAIN` is required and has no default: unset or blank, the layer answers 401 `CLERK_DOMAIN_NOT_CONFIGURED` and fetches no key set. The Convex layer enforces the same boundary via `memoriesScoped.ts` (`assertNamespaceAllowed`). Cross-tenant reads and writes emit `AUTH_NAMESPACE_DENIED`. Unregistered or inactive orgs are also fail-closed with `AUTH_NAMESPACE_DENIED`.
 
 ---
 

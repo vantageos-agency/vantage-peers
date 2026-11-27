@@ -20,7 +20,7 @@ const FORM = { "Content-Type": "application/x-www-form-urlencoded" };
  * the library default is the DEV instance, whose tickets prod Clerk rejects.
  */
 export function requireClerkDomain(env = process.env) {
-	const domain = env.CLERK_DOMAIN;
+	const domain = (env.CLERK_DOMAIN ?? "").trim();
 	if (!domain)
 		throw new Error(
 			"CLERK_DOMAIN is not set: the Clerk frontend API domain of this environment (prod: https://clerk.vantagepeers.com) is required, there is no dev fallback",

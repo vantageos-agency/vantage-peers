@@ -388,7 +388,7 @@ CONVEX_URL=https://<your-deployment>.convex.cloud npx vantage-peers-mcp
 
 That is **VantagePeers Self-host**, a separate product with its own setup (backend deployment, service identity, environment). It is documented separately at https://vantagepeers.com/docs/getting-started. Nothing in that setup applies to VantagePeers Cloud, and nothing above is needed to self-host.
 
-The stdio server answers MCP protocol `2026-07-28` and `2025-11-25` clients alike. It presents the service identity of your deployment to your backend (`CLERK_SECRET_KEY` and `CLERK_SERVICE_ACCOUNT_USER_ID`, see the Self-host guide); without it, it refuses to start.
+The stdio server answers MCP protocol `2026-07-28` and `2025-11-25` clients alike. It presents the service identity of your deployment to your backend (`CLERK_SECRET_KEY`, `CLERK_SERVICE_ACCOUNT_USER_ID` and `CLERK_DOMAIN`, the Clerk frontend API URL of your own Clerk instance, with no default; see the Self-host guide); without it, it refuses to start.
 
 The stdio server registers the same tools, so `list_tasks`, `list_messages`, `list_missions`, `list_memories`, `get_diary` and `get_briefing_note` carry the same `_meta.ui.resourceUri` links and serve the same static `ui://vp/apps/v1/<view>` documents for an MCP Apps-capable local client.
 
