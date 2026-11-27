@@ -4940,11 +4940,10 @@ export function registerTools(
 				// agent, by ID. `recipient` is accepted for compatibility and ignored.
 				const orgUnresolved = unresolvedOrgDenial("list_blocked_on_me");
 				if (orgUnresolved) return orgUnresolved;
-				// The door reads the blocked tasks of the verified agent BY ID: a bearer
-				// that resolved none (an org-level token) has no reader, and the door
-				// refuses it claimless, so it is refused here, typed, before the call.
-				const actorDenied = unverifiedActorDenial("tasks:listBlockedOnMe", true);
-				if (actorDenied) return actorDenied;
+				// DECLARED DIVERGENCE (S-28): a bearer that resolved no agent ID (an
+				// org-level token) is sent no claim on purpose, and the door refuses it
+				// (RBAC_DENIED claimless-service-account): the caller gate of this
+				// identity-bound read lives in the door (scope-guard-coverage.test.ts).
 				const result = await convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					"tasks:listBlockedOnMe" as any,
