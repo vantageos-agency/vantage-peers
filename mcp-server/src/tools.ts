@@ -10775,21 +10775,26 @@ export function registerTools(
 				// those are not missing. A client org is told it does not apply.
 				let routedElsewhere = 0;
 				if (absent.length > 0) {
-					const answer = (await convex.query("githubRepoMapping:routedElsewhere" as any, {
-						repos: absent,
-						...doorScopeArgs("githubRepoMapping:routedElsewhere", undefined),
-					})) as { applicable?: boolean; elsewhere?: string[] } | null;
-					if (
-						answer === null ||
-						typeof answer !== "object" ||
-						typeof answer.applicable !== "boolean" ||
-						!Array.isArray(answer.elsewhere)
-					) {
-						return mcpError(
-							"githubRepoMapping:routedElsewhere returned no answer; refusing to report an incomplete check",
-						);
+					// The door judges at most 500 distinct names per call: ask in batches of 500, merge.
+					const ELSEWHERE_BATCH = 500;
+					const elsewhere = new Set<string>();
+					for (let i = 0; i < absent.length; i += ELSEWHERE_BATCH) {
+						const answer = (await convex.query("githubRepoMapping:routedElsewhere" as any, {
+							repos: absent.slice(i, i + ELSEWHERE_BATCH),
+							...doorScopeArgs("githubRepoMapping:routedElsewhere", undefined),
+						})) as { applicable?: boolean; elsewhere?: string[] } | null;
+						if (
+							answer === null ||
+							typeof answer !== "object" ||
+							typeof answer.applicable !== "boolean" ||
+							!Array.isArray(answer.elsewhere)
+						) {
+							return mcpError(
+								"githubRepoMapping:routedElsewhere returned no answer; refusing to report an incomplete check",
+							);
+						}
+						for (const repo of answer.elsewhere) elsewhere.add(repo);
 					}
-					const elsewhere = new Set(answer.elsewhere);
 					for (const repo of absent) {
 						if (elsewhere.has(repo)) routedElsewhere += 1;
 						else missing.push(repo);

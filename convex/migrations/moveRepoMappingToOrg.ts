@@ -18,7 +18,9 @@
 //
 // SHAPE. DRY RUN BY DEFAULT: nothing is written unless `apply: true`.
 // REVERSIBLE: `apply` returns `moved` ({ id, prior }); `revert` restores exactly that
-// prior org and those prior ID fields on exactly those rows.
+// prior org and those prior ID fields on exactly those rows (walking `moved` newest first).
+// A role ID the input does not supply is cleared on the moved row, never kept from the old org.
+// A repo named twice in one call is refused (`duplicate-repo`) for every occurrence.
 //
 // OPERATING (internal — `convex run`, deployment admin credential; not reachable
 // from any client, hence no per-caller auth check):
@@ -61,6 +63,7 @@ const REASON = v.union(
 	v.literal("target-org-not-found"),
 	v.literal("agent-not-in-org"),
 	v.literal("no-label-for-role"),
+	v.literal("duplicate-repo"),
 );
 
 export const run = internalMutation({
@@ -101,12 +104,20 @@ export const run = internalMutation({
 		const unchanged: string[] = [];
 		const refused: Array<{
 			repo: string;
-			reason: "target-org-not-found" | "agent-not-in-org" | "no-label-for-role";
+			reason: "target-org-not-found" | "agent-not-in-org" | "no-label-for-role" | "duplicate-repo";
 			role?: Field;
 			agentId?: Id<"agents">;
 		}> = [];
 		const unknownRepos: string[] = [];
+		// A repo named twice in one call is ambiguous (chained priors, an order-dependent end
+		// state): every occurrence is refused before anything is read or written.
+		const seen = new Map<string, number>();
+		for (const input of args.rows) seen.set(input.repo, (seen.get(input.repo) ?? 0) + 1);
 		for (const input of args.rows) {
+			if ((seen.get(input.repo) ?? 0) > 1) {
+				refused.push({ repo: input.repo, reason: "duplicate-repo" });
+				continue;
+			}
 			const row = await ctx.db
 				.query("githubRepoMapping")
 				.withIndex("by_repo", (q) => q.eq("repo", input.repo))
@@ -164,7 +175,11 @@ export const run = internalMutation({
 				await ctx.db.patch(row._id, {
 					orgId: target.label,
 					clerkOrgId: input.toClerkOrgId,
-					...ids,
+					// A role the input does not supply is CLEARED: the moved row carries only IDs
+					// validated in the target org. The prior (recorded above) restores them.
+					orchestratorAgentId: ids.orchestratorAgentId,
+					reviewerAgentId: ids.reviewerAgentId,
+					fallbackReviewerAgentId: ids.fallbackReviewerAgentId,
 				});
 			}
 			moved.push({ id: row._id, prior });
@@ -184,7 +199,8 @@ export const revert = internalMutation({
 	returns: v.object({ reverted: v.number() }),
 	handler: async (ctx, args) => {
 		let reverted = 0;
-		for (const { id, prior } of args.moved) {
+		// Newest first: each prior is the state BEFORE its move, so a reverse walk lands on the oldest.
+		for (const { id, prior } of [...args.moved].reverse()) {
 			const row = await ctx.db.get(id);
 			if (row === null) continue;
 			await ctx.db.patch(id, {
