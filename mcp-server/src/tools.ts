@@ -3342,6 +3342,7 @@ export function registerTools(
 				// collapse to a non-leaky "not found" shape (same as a missing row).
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
+					...doorScopeArgs("memories:getMemory", undefined),
 				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {

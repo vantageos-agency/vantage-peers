@@ -281,6 +281,21 @@ export function registerKbIngestTools(
 			: {};
 	};
 
+	// A lookup miss at this boundary is a DENY, never a fall-through: a bearer
+	// that resolves no verified organisation (it carries only a team/<org> write
+	// prefix, no verified slug, and is not a Clerk session, whose own org Convex
+	// already sees) is refused here, before the door, instead of reaching a door
+	// that would take the namespace on its word. The master is refused earlier by
+	// resolveOrgContext (store/soft-delete/generate) and keeps its path in claim_upload.
+	const unresolvedOrgDenial = (tool: string, door: string): void => {
+		if (oauthCtx?.isMaster === true || oauthCtx?.clerkJwt !== undefined) return;
+		if (verifiedOrgSlugOf(oauthCtx) !== undefined) return;
+		throw new ProtocolError(
+			ProtocolErrorCode.InvalidRequest,
+			`RBAC_DENIED: ${tool} needs the caller's verified organisation and this bearer resolves none — ${JSON.stringify({ reason: "verified-org-unresolved", door })}`,
+		);
+	};
+
 	// All KB-ingest tools enforce tenant isolation in-handler via
 	// resolveOrgContext() (fails closed with AUTH_NO_ORG_ID for master/legacy),
 	// so their declared scope is "filtered".
@@ -310,6 +325,10 @@ export function registerKbIngestTools(
 		async ({ storageId, mimeType, filename, docId }) => {
 			try {
 				const { orgId, namespacePrefix } = resolveOrgContext();
+				unresolvedOrgDenial(
+					"store_document_chunked",
+					"kb:storeDocumentChunked",
+				);
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:storeDocumentChunked" as unknown as ActionRef,
@@ -370,6 +389,7 @@ export function registerKbIngestTools(
 		async ({ docId }) => {
 			try {
 				const { orgId, namespacePrefix } = resolveOrgContext();
+				unresolvedOrgDenial("soft_delete_document", "kb:softDeleteDocument");
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:softDeleteDocument" as unknown as ActionRef,
@@ -429,6 +449,12 @@ export function registerKbIngestTools(
 		async ({ sha256 }) => {
 			try {
 				const { orgId, namespacePrefix } = resolveOrgContext();
+				unresolvedOrgDenial(
+					"generate_upload_url",
+					sha256 === undefined
+						? "kbMutations:generateUploadUrl"
+						: "kbMutations:generateUploadUrlWithTicket",
+				);
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				if (sha256 === undefined) {
 					// URL only, said so explicitly: no ticket, so this blob can never be
@@ -520,6 +546,7 @@ export function registerKbIngestTools(
 		},
 		async ({ storageId, ticket }) => {
 			try {
+				unresolvedOrgDenial("claim_upload", "kbMutations:claimUpload");
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				const result = (await convex.mutation(
 					"kbMutations:claimUpload" as unknown as MutationRef,
