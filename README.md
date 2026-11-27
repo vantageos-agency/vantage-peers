@@ -452,6 +452,8 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 
 **Recurring tasks (7):** `create_recurring_task`, `list_recurring_tasks`, `get_recurring_task`, `pause_recurring_task`, `resume_recurring_task`, `delete_recurring_task`, `update_recurring_task`
 
+Since 6.0.0, `create_recurring_task` requires `project`; an empty or blank one is refused (#1800).
+
 </details>
 
 <details>
@@ -541,6 +543,7 @@ Full reference: [list_components — MCP Tools Reference](https://vantagepeers.c
 - **`fields='lite'`**: projects to `{_id, _creationTime, repo, orchestrator, project}` — excludes `active`, `lastDeployedSHA`, `lastDeployedAt`. PR-C activates the actual server-side projection.
 - **Envelope**: returns `{ items, nextCursor }` (was flat array). `nextCursor` is `null` on the last page, opaque string otherwise.
 - **Cursor**: encodes `{time, id}` to survive same-millisecond inserts. Hybrid decode preserves S3.3 B8 `{createdBefore}` cursors.
+- **6.0.0**: pages beyond the first are reachable by passing back the `nextCursor` the previous page returned (#1805). A page that holds an out-of-scope row is served: `orchestrator` is absent on that row and `outOfScope.reason` says why.
 
 Full reference: [list_repo_mappings — MCP Tools Reference](https://vantagepeers.com/docs/cloud/mcp-tools/list-repo-mappings).
 

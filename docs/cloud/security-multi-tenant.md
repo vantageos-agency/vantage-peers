@@ -101,7 +101,7 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 |---|---|---|---|
 | `scope_profile.name` | `string` (opaque identifier) | Uniquely identifies a scope-profile record in the catalog. Human-readable slug (`helios-<client-org>`, `alpha-test-trio`). | Orchestrator ID, namespace prefix, identity filter value |
 | `scope_profile.fromAllowList[]` | `string[]` | Speak-as identities: `createdBy`, `from`, `callerOrchestrator`, and `recipient` when the caller claims to be that identity. Also the **list/read** filter for `list_tasks assignedTo=` / `createdBy=` (who this client may *query*). | Namespace filter, profile name comparison, **create/update `assignedTo` (delegation)** |
-| Org roster (`client_org_mapping.allowedOrchestrators`, derived from the access token's `clerkOrgSlug` or a Clerk JWT — never from an org argument) | `string[]` (data) | Delegation: `assignedTo` on `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task`. Membership is read from that mapping row. | Speak-as; the MCP service-account `["*"]` roster |
+| Org roster (`client_org_mapping.allowedOrchestrators`, derived from the access token's `clerkOrgSlug` or a Clerk JWT — never from an org argument) | `string[]` (data) | Delegation: `assignedTo` on `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task` (since 6.0.0 `create_recurring_task` also requires `project`, #1800). Membership is read from that mapping row. | Speak-as; the MCP service-account `["*"]` roster |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Prefix list for namespace-scoped **READ** operations (`list_memories`, `recall`, `get_memory`). | Identity filter, write gate |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Prefix list for namespace-scoped **WRITE** operations (`store_memory`). | Identity filter, read gate |
 
@@ -113,7 +113,7 @@ The scope-aware filter framework is the single chokepoint that translates an aut
 |---|---|---|---|
 | `scope_profile.name` | `string` (identifiant opaque) | Identifie de manière unique un enregistrement scope-profile dans le catalogue. Slug lisible (`helios-<client-org>`, `alpha-test-trio`). | ID d'orchestrateur, préfixe de namespace, valeur de filtre d'identité |
 | `scope_profile.fromAllowList[]` | `string[]` | Identités speak-as : `createdBy`, `from`, `callerOrchestrator`, et `recipient` quand l'appelant prétend être cette identité. Aussi le filtre **lecture** de `list_tasks assignedTo=` / `createdBy=` (qui ce client peut *interroger*). | Filtre de namespace, comparaison de nom de profil, **`assignedTo` à la création/mise à jour (délégation)** |
-| Roster d'org (`client_org_mapping.allowedOrchestrators`, dérivé du `clerkOrgSlug` du jeton ou d'un JWT Clerk — jamais d'un argument d'organisation) | `string[]` (données) | Délégation : `assignedTo` sur `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task`. L'appartenance se lit sur cette row. | Speak-as ; le roster `["*"]` du service-account MCP |
+| Roster d'org (`client_org_mapping.allowedOrchestrators`, dérivé du `clerkOrgSlug` du jeton ou d'un JWT Clerk — jamais d'un argument d'organisation) | `string[]` (données) | Délégation : `assignedTo` sur `create_task` / `update_task` / `create_recurring_task` / `update_recurring_task` (depuis 6.0.0, `create_recurring_task` exige aussi `project`, #1800). L'appartenance se lit sur cette row. | Speak-as ; le roster `["*"]` du service-account MCP |
 | `scope_profile.namespaceReadPrefixes[]` | `string[]` | Liste de préfixes pour les opérations de **LECTURE** par namespace (`list_memories`, `recall`, `get_memory`). | Filtre d'identité, verrou d'écriture |
 | `scope_profile.namespaceWritePrefixes[]` | `string[]` | Liste de préfixes pour les opérations d'**ÉCRITURE** par namespace (`store_memory`). | Filtre d'identité, verrou de lecture |
 
@@ -192,6 +192,10 @@ Correspondance exacte ou hiérarchique : `project/<client-org>/sub` passe si le 
 | `isMaster` | `false` |
 
 Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `CLERK_DOMAIN/.well-known/jwks.json` (10-min in-process cache) and populates the above context. `CLERK_DOMAIN` is required and has no default: unset or blank, the layer answers 401 `CLERK_DOMAIN_NOT_CONFIGURED` and fetches no key set. The Convex layer enforces the same boundary via `memoriesScoped.ts` (`assertNamespaceAllowed`). Cross-tenant reads and writes emit `AUTH_NAMESPACE_DENIED`. Unregistered or inactive orgs are also fail-closed with `AUTH_NAMESPACE_DENIED`.
+
+`CLERK_DOMAIN` (6.0.0, #1795): required for the service-account mint, no default. An unset, empty or whitespace-only value is refused before any Clerk call. JWT verification still defaults it until #1802 merges.
+
+**FR — `CLERK_DOMAIN` (6.0.0, #1795) : requis pour le mint du service-account, sans valeur par défaut. Une valeur absente, vide ou faite d'espaces est refusée avant tout appel Clerk. La vérification JWT garde un défaut tant que #1802 n'est pas fusionnée.**
 
 ---
 
