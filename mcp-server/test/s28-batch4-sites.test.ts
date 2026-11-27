@@ -74,6 +74,10 @@ const NO_ORG: OAuthContext = { ...base };
 
 // ── 1. memory-quote (resources/read, class A) ───────────────────────────────
 
+// The read gate admits a non-master bearer by its organisation ID (register.ts).
+const UI_ORG_TOKEN: OAuthContext = { ...ORG_TOKEN, orgClerkId: "org_AAAA" };
+const UI_SEAT: OAuthContext = { ...SEAT, orgClerkId: "org_AAAA" };
+
 type Call = { name: string; args: Record<string, unknown> };
 
 async function readMemoryQuote(ctx: OAuthContext | undefined) {
@@ -108,7 +112,7 @@ async function readMemoryQuote(ctx: OAuthContext | undefined) {
 describe("memory-quote -> memories:listMemories forwards the agent ID the caller holds", () => {
 	const door = "memories:listMemories";
 	it("a seat with an agent ID: the door receives verifiedActor (agent ID and org)", async () => {
-		const r = await readMemoryQuote(SEAT);
+		const r = await readMemoryQuote(UI_SEAT);
 		expect(r.refused).toBe(false);
 		const c = r.calls.find((x) => x.name === door);
 		expect(c?.args.verifiedActor).toEqual({ agentId: CLIO_ID, orgSlug: ORG });
@@ -130,7 +134,7 @@ describe("memory-quote -> memories:listMemories forwards the agent ID the caller
 			},
 		} as unknown as UiResourceConvexClient;
 		const server = new McpServer({ name: "t", version: "0.0.0" });
-		registerUiResources(server, fake, SEAT, {
+		registerUiResources(server, fake, UI_SEAT, {
 			master: false,
 			callerIdentities: ["clio"],
 		});
@@ -145,7 +149,7 @@ describe("memory-quote -> memories:listMemories forwards the agent ID the caller
 		expect(c?.args.verifiedActor).toEqual({ agentId: CLIO_ID, orgSlug: ORG });
 	});
 	it("an org token with no agent ID, a master with none and a Clerk session: served, no actor", async () => {
-		for (const ctx of [ORG_TOKEN, MASTER, CLERK]) {
+		for (const ctx of [UI_ORG_TOKEN, MASTER, CLERK]) {
 			const r = await readMemoryQuote(ctx);
 			expect(r.refused).toBe(false);
 			const c = r.calls.find((x) => x.name === door);
