@@ -57,5 +57,5 @@ jobs:
         # vitest's non-zero exit on unhandled rejections (Convex
         # "Write outside of transaction" — fix-pattern m97cahtjf) still
         # surfaces as CI red even when "N passed" is shown.
-        # The Railway PROD e2e mcp-crud spec stays separate (mcp-crud-baseline.yml).
+        # The Railway PROD e2e mcp-crud spec stays separate (retired mcp-crud-baseline workflow; live check is scripts/post-deploy-probe.mjs).
         run: npx vitest run convex/ mcp-server/test/ mcp-server/src/__tests__/

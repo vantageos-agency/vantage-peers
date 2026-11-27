@@ -15,11 +15,11 @@ import { describe, expect, it } from "vitest";
 /**
  * Full-suite gates for two disabled workflows.
  *
- * GitHub Actions are disabled on this repository, so .github/workflows/check-generated.yml and
+ * GitHub Actions are disabled on this repository, so the retired check-generated workflow and
  * .github/workflows/mcp-server-lockfile-isolated.yml run no job. These tests ARE the gates:
  * `npx vitest run` at the repo root collects them.
  *
- * 1. check-generated.yml, module-coverage step: every Convex module under convex/ (recursive,
+ * 1. the retired check-generated workflow, module-coverage step: every Convex module under convex/ (recursive,
  *    nested lib/, migrations/, _helpers/ included) has its `"../<path>.js"` import in
  *    convex/_generated/api.d.ts. Same exclusions as the workflow: *.test.ts, *.spec.ts, and the
  *    config-only modules schema.ts, auth.config.ts, convex.config.ts.
@@ -66,7 +66,7 @@ function convexModules(dir = convexDir) {
 	return out.sort();
 }
 
-describe("check-generated gate (module coverage, ported from .github/workflows/check-generated.yml)", () => {
+describe("check-generated gate (module coverage, ported from the retired check-generated workflow)", () => {
 	it("every Convex module has its import in convex/_generated/api.d.ts", () => {
 		expect(
 			existsSync(apiDts),

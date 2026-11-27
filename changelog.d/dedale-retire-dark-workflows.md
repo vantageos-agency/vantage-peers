@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **Four dark GitHub workflows are retired; each check now has a named home (task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d).** GitHub Actions are off, and these four need secrets or production that `npx vitest run` never holds, so they could not be ported: `mcp-crud-baseline.yml` (now `scripts/post-deploy-probe.mjs` after every deploy), `npm-publish.yml` (now the manual publish from the merge commit, proven by `npm view vantage-peers-mcp dist-tags` re-read with a cache-buster), `check-generated.yml` (module coverage already in the suite; codegen drift is sigma's deploy-time step) and `plugin-vr-parity.yml` (the secret-gated half runs at plugin release under `infisical run`). The steps are in `runbooks/railway-mcp-redeploy.md`, section "Retired workflows". Two of the plugin-release secret names (`VANTAGE_CLIENT_HASHES`, `VANTAGE_REGISTRY_TOKEN`) are absent from the vault today; the runbook says so. The 8 ported workflows are unchanged.

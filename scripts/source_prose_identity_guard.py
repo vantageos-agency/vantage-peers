@@ -20,7 +20,7 @@ construction on that PR and every future one. Verification != Activation.
 This version reuses the CANONICAL resolver (`client_identity_config.py`,
 already wired into `scripts/leak_guard.py` and already fed by the
 `VANTAGE_CLIENT_HASHES` GitHub Actions secret in
-`.github/workflows/plugin-vr-parity.yml`) instead of inventing a second one.
+the retired plugin-vr-parity workflow (runbooks/railway-mcp-redeploy.md, "Plugin release gates")) instead of inventing a second one.
 It lives next to `leak_guard.py` as a Python check because the canonical
 resolver + matcher (`resolve_vocabulary_or_fail`, `hash_matcher_findings`,
 `build_client_data_patterns`) are Python, and this guard imports them
@@ -50,7 +50,7 @@ repo is clean" must NEVER produce the same passing result. If neither
 vocabulary source resolves (`ClientIdentityConfigError`), this guard's `main`
 exits non-zero with a message naming both attempted sources -- it never
 silently skips or prints a passing result. In CI, `VANTAGE_CLIENT_HASHES` is
-set (see `.github/workflows/plugin-vr-parity.yml`), so an "unresolvable"
+set (see the retired plugin-vr-parity workflow (runbooks/railway-mcp-redeploy.md, "Plugin release gates")), so an "unresolvable"
 outcome in the required job is a real misconfiguration, not the normal case.
 
 SCOPE: this guard checks the "auth profile perimeter" files --
@@ -179,7 +179,7 @@ _PATH_PLACEHOLDER = " REPO_PATH_OR_INVOCATION "
 #   normalized_ngram)`. `vocab_salt` is `VANTAGE_CLIENT_HASHES["salt"]`, a
 #   GitHub Actions secret value that is NEVER committed to this repo and
 #   NEVER echoed by this guard, the workflow, or `client_identity_config.py`
-#   (see `.github/workflows/plugin-vr-parity.yml`: the secret is only ever
+#   (see the retired plugin-vr-parity workflow (runbooks/railway-mcp-redeploy.md, "Plugin release gates"): the secret is only ever
 #   bound to an env var the job process reads, never printed). Because the
 #   salt stays secret, a hex prefix of the digest is NOT a dictionary-attack
 #   oracle: an attacker with only the public repo + public CI logs has the
