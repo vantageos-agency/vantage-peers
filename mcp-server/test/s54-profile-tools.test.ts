@@ -12,7 +12,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CLIENT_CTX, expectRefused, expectServed, harness } from "./lib/s54Harness.js";
+import {
+	CLIENT_CTX,
+	expectRefused,
+	expectServed,
+	harness,
+} from "./lib/s54Harness.js";
 
 describe("update_profile", () => {
 	it("upserts the profile and answers { profileId, orchestratorId, name }", async () => {
@@ -20,11 +25,19 @@ describe("update_profile", () => {
 		const res = await h.tools.get("update_profile")!.handler({
 			orchestratorId: "alpha",
 			name: "Alpha",
-			static: { role: "builder", workspace: "/root/coding/vantage-peers", capabilities: ["code"] },
+			static: {
+				role: "builder",
+				workspace: "/root/coding/vantage-peers",
+				capabilities: ["code"],
+			},
 			dynamic: { sessionCount: 5 },
 		});
 		const out = expectServed(h.tools, "update_profile", res);
-		expect(out).toEqual({ profileId: "profile-1", orchestratorId: "alpha", name: "Alpha" });
+		expect(out).toEqual({
+			profileId: "profile-1",
+			orchestratorId: "alpha",
+			name: "Alpha",
+		});
 		expect(JSON.parse(res.content[0].text)).toEqual(out);
 		expect(h.calls).toHaveLength(1);
 		expect(h.calls[0].fn).toBe("profiles:upsertProfile");
@@ -41,13 +54,20 @@ describe("update_profile", () => {
 				throw new Error("door down");
 			},
 		});
-		const res = await h.tools.get("update_profile")!.handler({ orchestratorId: "alpha" });
+		const res = await h.tools
+			.get("update_profile")!
+			.handler({ orchestratorId: "alpha" });
 		expectRefused(res, /door down/);
 	});
 
 	it("refuses an orchestratorId the bearer's allow-list does not name, before any door", async () => {
-		const h = harness({ "profiles:upsertProfile": () => "profile-1" }, CLIENT_CTX);
-		const res = await h.tools.get("update_profile")!.handler({ orchestratorId: "alpha" });
+		const h = harness(
+			{ "profiles:upsertProfile": () => "profile-1" },
+			CLIENT_CTX,
+		);
+		const res = await h.tools
+			.get("update_profile")!
+			.handler({ orchestratorId: "alpha" });
 		expectRefused(res, /alpha/);
 		expect(h.calls).toHaveLength(0);
 	});

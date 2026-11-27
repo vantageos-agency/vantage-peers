@@ -11,7 +11,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CLIENT_CTX, expectRefused, expectServed, harness } from "./lib/s54Harness.js";
+import {
+	CLIENT_CTX,
+	expectRefused,
+	expectServed,
+	harness,
+} from "./lib/s54Harness.js";
 
 describe("create_fix_pattern", () => {
 	const args = {
@@ -89,14 +94,21 @@ describe("add_fix_attempt", () => {
 
 	it("keeps a failed attempt as worked: false", async () => {
 		const h = harness({ "fixPatterns:addAttempt": () => "attempt-2" });
-		const res = await h.tools.get("add_fix_attempt")!.handler({ ...args, worked: false });
+		const res = await h.tools
+			.get("add_fix_attempt")!
+			.handler({ ...args, worked: false });
 		const out = expectServed(h.tools, "add_fix_attempt", res);
 		expect(out.worked).toBe(false);
 	});
 
 	it("refuses an author the bearer's allow-list does not name, before any door", async () => {
-		const h = harness({ "fixPatterns:addAttempt": () => "attempt-1" }, CLIENT_CTX);
-		const res = await h.tools.get("add_fix_attempt")!.handler({ ...args, createdBy: "alpha" });
+		const h = harness(
+			{ "fixPatterns:addAttempt": () => "attempt-1" },
+			CLIENT_CTX,
+		);
+		const res = await h.tools
+			.get("add_fix_attempt")!
+			.handler({ ...args, createdBy: "alpha" });
 		expectRefused(res, /alpha/);
 		expect(h.calls).toHaveLength(0);
 	});
@@ -117,10 +129,18 @@ describe("update_mission_template", () => {
 		const h = harness({ "missionTemplates:upsert": () => "template-1" });
 		const res = await h.tools.get("update_mission_template")!.handler(args);
 		const out = expectServed(h.tools, "update_mission_template", res);
-		expect(out).toEqual({ templateId: "template-1", name: "issue-resolution-v2", stepCount: 2 });
+		expect(out).toEqual({
+			templateId: "template-1",
+			name: "issue-resolution-v2",
+			stepCount: 2,
+		});
 		expect(JSON.parse(res.content[0].text)).toEqual(out);
 		expect(h.calls[0].fn).toBe("missionTemplates:upsert");
-		expect(h.calls[0].args).toMatchObject({ name: "issue-resolution-v2", createdBy: "alpha", steps: args.steps });
+		expect(h.calls[0].args).toMatchObject({
+			name: "issue-resolution-v2",
+			createdBy: "alpha",
+			steps: args.steps,
+		});
 	});
 
 	it("answers a typed error when the door refuses (a non-master author)", async () => {
@@ -134,7 +154,10 @@ describe("update_mission_template", () => {
 	});
 
 	it("refuses an author the bearer's allow-list does not name, before any door", async () => {
-		const h = harness({ "missionTemplates:upsert": () => "template-1" }, CLIENT_CTX);
+		const h = harness(
+			{ "missionTemplates:upsert": () => "template-1" },
+			CLIENT_CTX,
+		);
 		const res = await h.tools.get("update_mission_template")!.handler(args);
 		expectRefused(res, /alpha/);
 		expect(h.calls).toHaveLength(0);

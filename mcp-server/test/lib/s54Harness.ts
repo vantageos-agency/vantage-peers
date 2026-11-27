@@ -81,7 +81,10 @@ export function expectServed(
 	expect(res.isError, res.content?.[0]?.text).not.toBe(true);
 	const schema = tools.get(name)?.config.outputSchema;
 	expect(schema, `${name} declares an outputSchema`).toBeDefined();
-	expect(res.structuredContent, `${name} answers structuredContent`).toBeDefined();
+	expect(
+		res.structuredContent,
+		`${name} answers structuredContent`,
+	).toBeDefined();
 	expect(
 		(schema as NonNullable<typeof schema>).safeParse(res.structuredContent)
 			.success,
