@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **VantagePeers Cloud and Self-host: the business-unit tools return `structuredContent` with a declared output schema (task k171zenmb447qzdqjn7a026b4x8jxzse).** `create_bu`, `update_bu`, `get_bu`, `list_bus` and `delete_bu` now declare an `outputSchema` and answer a `structuredContent` that is the same object as their text (`list_bus` answers `{ items, nextCursor, truncated }` and still forwards the door's `{time,id}` cursor). The text of a success is unchanged; an error or a refusal still carries `isError` and no `structuredContent`. One behaviour change: `get_bu` on a unit that is absent or not visible to the caller now answers the error `Business unit not found` instead of a successful text `null`, because a tool that declares an output schema cannot answer a success without `structuredContent`. Additive, so a minor release. Pinned by `mcp-server/test/bu-tools-structured-content.test.ts`, which calls each tool through `registerTools`.
