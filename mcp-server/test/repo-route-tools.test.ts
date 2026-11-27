@@ -411,7 +411,10 @@ describe("check_repo_routing", () => {
 			{ repos },
 			{
 				pages: [{ items: [], nextCursor: null }],
-				elsewhere: { applicable: true, elsewhere: ["client/r0", "client/r500"] },
+				elsewhere: {
+					applicable: true,
+					elsewhere: ["client/r0", "client/r500"],
+				},
 			},
 		);
 		const doors = r.calls.filter(
