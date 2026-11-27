@@ -1,5 +1,5 @@
 import { requireProject } from "./lib/taskProject";
-import { sameOrg } from "@vantageos/cloud-identity";
+import { passesScopeFilter, sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -131,10 +131,9 @@ export const getByName = query({
 		verifiedOrg: v.optional(verifiedOrgValidator),
 		// The roster of a non-master bearer the MCP could resolve NO organisation
 		// for (S-35, task k17edzy4wpq0ng4cbytgj8ev6n8k0hsd): the read admits the
-		// template when its creator is on this roster, by the one roster predicate
-		// (`isOrchestratorOnOrgRoster`, normalised label compare, as the MCP's
-		// after-read `scopeFilterGet`; a "*" entry names nobody, and the MCP presents
-		// no roster for a master). Believed from the service account only and
+		// template when its creator is on this roster, by the package's `passesScopeFilter`, the very predicate the MCP's
+		// after-read `scopeFilterGet` applies (a "*" entry is its deprecated master
+		// signal, so it passes, as it does in the MCP). Believed from the service account only and
 		// ignored from anyone else; `verifiedOrg` wins when both are carried.
 		callerRoster: v.optional(v.array(v.string())),
 	},
@@ -172,9 +171,9 @@ export const getByName = query({
 			args.verifiedOrg === undefined &&
 			args.callerRoster !== undefined &&
 			isServiceTransport(transportScope) &&
-			!isOrchestratorOnOrgRoster(
-				{ allowedOrchestrators: args.callerRoster },
-				template.createdBy,
+			!passesScopeFilter(
+				{ fromAllowList: args.callerRoster, namespaceReadPrefixes: [] },
+				template,
 			)
 		) {
 			return null;

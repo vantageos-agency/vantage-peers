@@ -143,13 +143,13 @@ describe("missionTemplates:getByName applies the caller's roster inside the read
 		});
 		expect(foreign).toBeNull();
 	});
-	test("WILDCARD: a \"*\" entry names nobody (the MCP presents no roster for a master)", async () => {
+	test("WILDCARD: a \"*\" entry passes, as in the MCP's scopeFilterGet (its deprecated master signal)", async () => {
 		const t = await world();
 		const r = await asService(t).query(api.missionTemplates.getByName, {
 			name: OWN,
 			callerRoster: ["*"],
 		});
-		expect(r).toBeNull();
+		expect(r?.name).toBe(OWN);
 	});
 	test("UNCHANGED: no arguments reads any template as before", async () => {
 		const t = await world();
