@@ -6,6 +6,7 @@ scripts/leak_guard.py for the full rationale.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from conftest import could_not_judge  # noqa: E402
 
 from leak_guard import (  # noqa: E402
     BaselineUnresolvableError,
@@ -37,6 +41,15 @@ from client_identity_config import (  # noqa: E402
     resolve_config_path,
     resolve_vocabulary_or_fail,
 )
+
+def _require_live_vocabulary() -> None:
+    """The live-vocabulary tests judge real client names. When NEITHER source is provisioned
+    (no plaintext host config, no VANTAGE_CLIENT_HASHES) they cannot judge: COULD-NOT-JUDGE,
+    never a pass, never an error that reads as a code defect. A source that is present but
+    malformed still fails loud through the resolver."""
+    if not resolve_config_path().is_file() and not os.environ.get("VANTAGE_CLIENT_HASHES"):
+        could_not_judge("VANTAGE_CLIENT_HASHES")
+
 
 # Benign terms that MUST NOT match. A prior fleet purge used substring matching
 # and renamed "summaries" because it contains a guarded first name -- these pin
@@ -121,6 +134,7 @@ def real_client_identities():
     `load_raw_config`) if the host config is missing/empty/malformed -- that
     failure propagates as a pytest fixture ERROR, never a skip.
     """
+    _require_live_vocabulary()
     return load_raw_config(resolve_config_path())
 
 
@@ -128,6 +142,7 @@ def real_client_identities():
 def real_client_patterns():
     """The REAL, resolved (regex, reason) client-data patterns -- same call
     `leak_guard.main()` makes. Raises loudly if unresolvable (see above)."""
+    _require_live_vocabulary()
     return resolve_client_data_patterns()
 
 
@@ -238,6 +253,7 @@ def test_no_client_data_in_packaged_artifact():
     without a resolved vocabulary -- `resolve_vocabulary_or_fail()` raises, and the
     test ERRORs, when neither source resolves.
     """
+    _require_live_vocabulary()
     mode, vocab = resolve_vocabulary_or_fail()
     patterns = vocab if mode == "plaintext-patterns" else None
     hash_vocab = vocab if mode == "hashes" else None
@@ -935,6 +951,7 @@ def test_snake_case_fix_did_not_reintroduce_substring_matching(text):
     switched off. (I marked a test plaintext-only once already today and switched off
     the packaged scan on the one runner that ships. Not twice.)
     """
+    _require_live_vocabulary()
     mode, vocab = resolve_vocabulary_or_fail()
     patterns = vocab if mode == "plaintext-patterns" else None
     hash_vocab = vocab if mode == "hashes" else None

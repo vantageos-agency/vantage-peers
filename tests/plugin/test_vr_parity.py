@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import vr_plugin_parity  # noqa: E402
+from conftest import could_not_judge  # noqa: E402
 from vr_plugin_parity import (  # noqa: E402
     DEFAULT_VR_URL,
     VR_TOKEN_ENV,
@@ -96,10 +97,7 @@ def test_gate_fails_and_names_an_item_missing_from_vr(monkeypatch):
 def _require_token() -> str:
     token = os.environ.get(VR_TOKEN_ENV)
     if not token:
-        pytest.fail(
-            f"{VR_TOKEN_ENV} not set. The VR parity gate cannot authenticate "
-            "and must not silently pass without checking. Set the secret in CI."
-        )
+        could_not_judge(VR_TOKEN_ENV)
     return token
 
 

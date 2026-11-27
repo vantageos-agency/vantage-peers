@@ -34,7 +34,7 @@ CLI:
 --dry-run: skip the upsert (needs no write token) and only get_* + compare
 local-vs-VR -- useful to verify parity of an already-upserted item read-only.
 
-Token: the caller supplies VANTAGE_REGISTRY_TOKEN (a WRITE token for upsert). This
+Token: the caller supplies VANTAGE_REGISTRY_API_KEY (a WRITE token for upsert). This
 script NEVER embeds a token or secret.
 """
 

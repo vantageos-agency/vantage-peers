@@ -50,7 +50,7 @@ from leak_guard import (  # noqa: E402  (SECRECY > PARITY -- see check_item)
 )
 
 VR_URL_ENV = "VANTAGE_REGISTRY_MCP_URL"
-VR_TOKEN_ENV = "VANTAGE_REGISTRY_TOKEN"
+VR_TOKEN_ENV = "VANTAGE_REGISTRY_API_KEY"
 DEFAULT_VR_URL = "https://vantage-registry-mcp-production.up.railway.app/mcp"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
