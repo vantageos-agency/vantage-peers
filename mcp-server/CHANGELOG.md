@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [7.1.0] — 2026-11-27
+
+A minor release: every registered tool now declares an `outputSchema` and returns `structuredContent`; Self-host requires backend contract 36. This is a minor release because the changes add fields and keep every text, success and error as it was (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
+
+### Added
+
+- Cloud and Self-host: 26 more tools declare an `outputSchema` and answer a `structuredContent` that is the same object as their JSON text: the seven mandate tools (#1810), the five business-unit tools (#1812), the six issue tools (#1814), and `validate_okf_bundle`, `soft_delete_mission_template`, `add_deployment`, `remove_deployment`, `list_errors`, `get_error`, `validate_task_payload` and `get_repo_mapping` (#1816). The text of a success is unchanged; an error or a refusal still carries `isError` and no `structuredContent`. `get_bu`, `get_issue` and `get_error` stay a success when nothing matches, with `{ bu: null }`, `{ issue: null }` and `{ error: null }` as `structuredContent`; `get_repo_mapping` of a mapping that does not exist is still an error. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Changed
+
+- Self-host: the server requires backend contract version 36 (7.0.0: 34); the 155 called functions are unchanged. A backend below contract 36 is refused at start. Upgrade note: deploy the backend of this release first, then upgrade this package. Cloud clients have nothing to upgrade or configure: the Cloud backend is deployed by the platform (#1813, #1818). ([Backend compatibility check](README.md#backend-compatibility-check))
+- Cloud and Self-host: the MCP declares the four task, mission and recurring-task doors that apply the caller's verified organisation inside the read (`tasks:getById`, `tasks:getBulkCompleteRun`, `missions:get`, `recurringTasks:getById`) and forwards that organisation at every call site. The backend change is an expand step: a read without the claim is still served (#1813). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `get_mission_template` forwards the caller's verified organisation to `missionTemplates:getByName`, which applies it inside the read with the same rule as the after-read filter; that filter stays, so every caller's answer is unchanged (#1818). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `get_issue` and `issue_stats` read fleet-master-only backend doors. The caller's scope is checked before the read: a caller that is not the fleet master gets the answer it got before and the door is not called; the fleet master is unchanged (#1815). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `list_mandates`, `list_bus`, `list_issues` and `list_errors` measure the 60 KB page cap on the text and the structured content together, so a page over the cap is cut slightly earlier. A page of `list_errors` cut by the cap carries the cursor that continues after the last row shown, so the withheld rows are reachable (#1810, #1812, #1814, #1816). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: a tool registration without an `outputSchema` fails at registration, naming the tool. Every registered tool declares one, so no served tool changes (#1816). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [7.0.0] — 2026-11-27
 
 A major release: the five Knowledge Base tools and the Clerk-JWT layer refuse what 6.0.0 accepted. This is a major release because a credential stops being accepted (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
