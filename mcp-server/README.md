@@ -409,6 +409,12 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 5.2.1
+
+_Applies to: Cloud and Self-host._ A patch release: a fix to `list_diaries` for member callers; no tool is added or removed and no input or output shape changes.
+
+- Cloud and Self-host: `list_diaries` accepts a member's own verified identities (its agent name as `whoami` reports it, `user:<subject>`, the bare subject) and, with no filter, lists the caller's own entries instead of refusing; another member's name is still refused (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+
 ### 5.2.0
 
 _Applies to: Cloud and Self-host._ A minor release: one new output bucket on `check_repo_routing` and a fix to the `list_repo_mappings` output; no tool is added or removed and no input changes.
