@@ -16,8 +16,8 @@ import { describe, expect, it } from "vitest";
  *
  * NOT ported (declared here, where the reader sees it): tests/plugin/test_leak_guard.py needs the
  * client-identity vocabulary (VANTAGE_CLIENT_IDENTITIES or VANTAGE_CLIENT_HASHES) and
- * tests/plugin/test_vr_parity.py needs VANTAGE_REGISTRY_TOKEN. The full suite holds no secret, so
- * both refuse to judge there; they stay tied to the workflow header and to task
+ * tests/plugin/test_vr_parity.py needs VANTAGE_REGISTRY_API_KEY. The full suite holds no secret, so
+ * both report COULD-NOT-JUDGE there (tests/plugin/conftest.py); they stay tied to the workflow header and to task
  * k178k1e07c9tq1k2vb2wgxzw0x8jvx5d.
  *
  * Fail-closed: no python3, no pytest, or a spawn error FAILS the test. A gate that cannot run is red.

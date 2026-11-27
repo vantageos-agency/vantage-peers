@@ -74,12 +74,14 @@ Its module-coverage step runs in the suite (`scripts/__tests__/generated-and-loc
 ```
 infisical run --env=prod --path=/shared --projectId=<ma-fabrique project id> -- bash -c '
   set -euo pipefail
-  pytest tests/plugin/test_leak_guard.py -v
+  python3 -m pytest tests/plugin/test_leak_guard.py -v -rs
   python3 scripts/source_prose_identity_guard.py
-  pytest tests/plugin/test_vr_parity.py -v'
+  python3 -m pytest tests/plugin/test_vr_parity.py -v -rs'
 ```
 
-The workflow read `VANTAGE_CLIENT_HASHES` (salted-hash vocabulary) and `VANTAGE_REGISTRY_TOKEN`. Measured 2026-11-27: `vault-get VANTAGE_CLIENT_HASHES` and `vault-get VANTAGE_REGISTRY_TOKEN` both report `absent` (all folders, prod); `NPM_TOKEN` is found at `/shared`. Until those two names are provisioned in the vault (or mapped to existing ones, for example `VANTAGE_REGISTRY_API_KEY`), the command above stops loudly on a missing variable; do not fall back to another source.
+The workflow read `VANTAGE_CLIENT_HASHES` (salted-hash vocabulary) and the registry credential, which now has ONE name everywhere: `VANTAGE_REGISTRY_API_KEY` (the name the vault holds; the former name is retired from every reader). Pi provisions `VANTAGE_CLIENT_HASHES` and a live `VANTAGE_REGISTRY_API_KEY` in `/shared` (prod) after the merge of the retirement PR; until then both are absent and the step cannot judge.
+
+**The step fails loud on COULD-NOT-JUDGE.** When either name is absent from the process environment, the tests skip with a reason that starts `COULD-NOT-JUDGE: <NAME> absent from the environment`, `tests/plugin/conftest.py` prints every such reason in a red summary section, and the pytest exit status becomes 6 (distinct from 1 = a test failed, 5 = nothing collected). Under `set -e` the step stops. It is never a pass, never a silent skip, and never a red that reads as a code defect: exit 6 means the environment, not the code, is missing something. Do not fall back to another source.
 
 ## Pitfalls (each cost real time or an incident)
 
