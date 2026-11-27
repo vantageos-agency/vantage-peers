@@ -25,7 +25,7 @@ it says UNKNOWN and why.
 | Fact | Value | Source |
 |---|---|---|
 | Package version | `5.2.0` | `grep '"version"' mcp-server/package.json` -> `"version": "5.2.0"` |
-| npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
+| npm published version | read it at deploy time (registry state, not held on this page) | `npm view vantage-peers-mcp dist-tags` |
 | Tools **registered** by the server | `123` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 123`, `registered names 123 vs documented names 123` |
 | Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
 | Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 123 - 97 = 26 |
@@ -44,9 +44,10 @@ around line 1870-1925, reads `tool-exposure.json`, overridable by
 Not the same as the published release: the numbers 123 / 97 / contract 34 /
 155 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
-(`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
-package is `4.1.0`. Whether the `4.1.0` tarball on npm carries 123 or an
-earlier count of tools is UNKNOWN (the tarball was not unpacked); a deployer
+(`grep -n 'contract version\|141' mcp-server/README.md`). The published npm
+tarball can carry different numbers from the tree: read the published version
+with `npm view vantage-peers-mcp version` and the tarball contents with
+`npm pack vantage-peers-mcp --dry-run`. A deployer
 following the template's Source (`main`, see B1) gets the tree numbers.
 
 Live page, as read via WebFetch on 2026-11-03 (a model summary of the page,
@@ -343,7 +344,7 @@ validation on deploy is the safety net, not this list.
 - Whether `BEARER_SECRET_MASTER` must be mirrored in Convex.
 - Value shape of `/health` `authorize.handshake`, and any captured live
   `/health` response.
-- Tool counts inside the published `vantage-peers-mcp@4.0.0` tarball
+- Tool counts inside the published `vantage-peers-mcp` tarball
   versus this tree.
 - Registered/advertised counts at 2.17.0 and 2.18.0 (see B3.4).
 - Any `convex/schema.ts` rename or removal since 2.2.0.
