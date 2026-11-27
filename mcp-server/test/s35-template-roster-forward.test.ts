@@ -37,8 +37,13 @@ async function call(ctx: OAuthContext, row: unknown) {
 	const handlers = new Map<string, (a: any) => any>();
 	const queries: { path: string; args: any }[] = [];
 	const server = {
-		tool: (n: string, _d: string, _s: unknown, _a: unknown, h: (a: any) => any) =>
-			handlers.set(n, h),
+		tool: (
+			n: string,
+			_d: string,
+			_s: unknown,
+			_a: unknown,
+			h: (a: any) => any,
+		) => handlers.set(n, h),
 		registerTool: (n: string, _c: unknown, h: (a: any) => any) =>
 			handlers.set(n, h),
 	} as any;
@@ -52,12 +57,18 @@ async function call(ctx: OAuthContext, row: unknown) {
 	} as any;
 	registerTools(server, convex, ctx);
 	const res = await handlers.get("get_mission_template")!({ name: "t" });
-	return { res, door: queries.find((q) => q.path === "missionTemplates:getByName")! };
+	return {
+		res,
+		door: queries.find((q) => q.path === "missionTemplates:getByName")!,
+	};
 }
 
 describe("get_mission_template forwards callerRoster", () => {
 	it("non-master with a roster and no verified org: callerRoster is the caller's roster", async () => {
-		const { door, res } = await call(rosterCtx(), { name: "t", createdBy: "alpha" });
+		const { door, res } = await call(rosterCtx(), {
+			name: "t",
+			createdBy: "alpha",
+		});
 		expect(door.args.callerRoster).toEqual(["alpha"]);
 		expect(door.args.verifiedOrg).toBeUndefined();
 		expect(res.content[0].text).toContain('"createdBy": "alpha"');
