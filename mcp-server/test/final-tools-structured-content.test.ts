@@ -78,7 +78,6 @@ function harness(
 	};
 }
 
-
 const REPO = "vantageos-agency/vantage-peers";
 const ERR_ID = "j57dy3049btafda9m2f5d2ggk987ph3f";
 
@@ -205,9 +204,13 @@ describe("soft_delete_mission_template (S-54: called)", () => {
 	});
 
 	it("a refusal from the door stays an error with no structuredContent", async () => {
-		await refused("soft_delete_mission_template", "missionTemplates:softDelete", {
-			name: "x",
-		});
+		await refused(
+			"soft_delete_mission_template",
+			"missionTemplates:softDelete",
+			{
+				name: "x",
+			},
+		);
 	});
 });
 
@@ -299,7 +302,10 @@ describe("list_errors", () => {
 		);
 		const h = harness({ "errorMonitor:listErrors": () => rows });
 		const res = await success(h, "list_errors", { limit: 200 });
-		const sc = res.structuredContent as { items: unknown[]; truncated: boolean };
+		const sc = res.structuredContent as {
+			items: unknown[];
+			truncated: boolean;
+		};
 		expect(sc.truncated).toBe(true);
 		expect(sc.items.length).toBeLessThan(200);
 		const text = JSON.parse(res.content[0].text) as {

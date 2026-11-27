@@ -1736,79 +1736,82 @@ export const listRecurringTasksServedOutputSchema = pageOf(
 	{ scopeFiltered: pageScopeFiltered },
 );
 
+/** A repo-mapping row: githubRepoMapping:list `returns:` (full rows; lite rows carry a subset). */
+const repoMappingRow = z.looseObject({
+	_id: rowId("The mapping's ID."),
+	_creationTime: creationTime,
+	repo: z
+		.string()
+		.describe("The GitHub repository, as owner/name, e.g. 'acme/app'."),
+	orchestrator: z
+		.string()
+		.optional()
+		.describe(
+			"The orchestrator the repository's events are routed to; absent on an out-of-scope row (a repository nobody owns).",
+		),
+	outOfScope: z
+		.looseObject({
+			reason: z.string().describe("Why nobody owns the repository."),
+		})
+		.optional()
+		.describe(
+			"Present when the repository is recorded as owned by nobody, with the reason; absent on a routed row, and on lite rows.",
+		),
+	project: z.string().describe("The project the repository belongs to."),
+	active: z
+		.boolean()
+		.optional()
+		.describe(
+			"Whether events are routed for the repository; absent on lite rows.",
+		),
+	lastDeployedSHA: z
+		.string()
+		.optional()
+		.describe(
+			"The commit last deployed to production; absent when no deploy was recorded, and on lite rows.",
+		),
+	lastDeployedAt: z
+		.number()
+		.optional()
+		.describe(
+			"When that commit was deployed (milliseconds since the Unix epoch); absent when no deploy was recorded, and on lite rows.",
+		),
+	reviewer: z
+		.string()
+		.optional()
+		.describe(
+			"Who reviews the repository's pull requests; absent when the fleet default applies, and on lite rows.",
+		),
+	fallbackReviewer: z
+		.string()
+		.optional()
+		.describe(
+			"Who reviews when the reviewer cannot; absent when the fleet default applies, and on lite rows.",
+		),
+	orchestratorAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The ID of the agent the orchestrator label names; absent on a row that routes by label only, on an out-of-scope row, and on lite rows.",
+		),
+	reviewerAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The ID of the agent the reviewer label names; absent when none was stamped, and on lite rows.",
+		),
+	fallbackReviewerAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The ID of the agent the fallback reviewer label names; absent when none was stamped, and on lite rows.",
+		),
+	orgId: orgSlug("mapping"),
+});
+
 /** list_repo_mappings: githubRepoMapping:list `returns:` (full or lite rows). */
 export const listRepoMappingsServedOutputSchema = pageOf(
-	z.looseObject({
-		_id: rowId("The mapping's ID."),
-		_creationTime: creationTime,
-		repo: z
-			.string()
-			.describe("The GitHub repository, as owner/name, e.g. 'acme/app'."),
-		orchestrator: z
-			.string()
-			.optional()
-			.describe(
-				"The orchestrator the repository's events are routed to; absent on an out-of-scope row (a repository nobody owns).",
-			),
-		outOfScope: z
-			.looseObject({
-				reason: z.string().describe("Why nobody owns the repository."),
-			})
-			.optional()
-			.describe(
-				"Present when the repository is recorded as owned by nobody, with the reason; absent on a routed row, and on lite rows.",
-			),
-		project: z.string().describe("The project the repository belongs to."),
-		active: z
-			.boolean()
-			.optional()
-			.describe(
-				"Whether events are routed for the repository; absent on lite rows.",
-			),
-		lastDeployedSHA: z
-			.string()
-			.optional()
-			.describe(
-				"The commit last deployed to production; absent when no deploy was recorded, and on lite rows.",
-			),
-		lastDeployedAt: z
-			.number()
-			.optional()
-			.describe(
-				"When that commit was deployed (milliseconds since the Unix epoch); absent when no deploy was recorded, and on lite rows.",
-			),
-		reviewer: z
-			.string()
-			.optional()
-			.describe(
-				"Who reviews the repository's pull requests; absent when the fleet default applies, and on lite rows.",
-			),
-		fallbackReviewer: z
-			.string()
-			.optional()
-			.describe(
-				"Who reviews when the reviewer cannot; absent when the fleet default applies, and on lite rows.",
-			),
-		orchestratorAgentId: z
-			.string()
-			.optional()
-			.describe(
-				"The ID of the agent the orchestrator label names; absent on a row that routes by label only, on an out-of-scope row, and on lite rows.",
-			),
-		reviewerAgentId: z
-			.string()
-			.optional()
-			.describe(
-				"The ID of the agent the reviewer label names; absent when none was stamped, and on lite rows.",
-			),
-		fallbackReviewerAgentId: z
-			.string()
-			.optional()
-			.describe(
-				"The ID of the agent the fallback reviewer label names; absent when none was stamped, and on lite rows.",
-			),
-		orgId: orgSlug("mapping"),
-	}),
+	repoMappingRow,
 	"The mappings, newest first; lite rows carry _id, _creationTime, repo, orchestrator (absent on an out-of-scope row) and project, full rows every stored field.",
 );
 
@@ -3263,4 +3266,188 @@ export const issueStatsServedOutputSchema = z.looseObject({
 		.describe(
 			"How many issues were counted in all (the scan stops at 1000 rows).",
 		),
+});
+
+// ── the last eight (mcp-doctor S-51 / S-53; the final batch) ─────────────────
+
+/** An errorLogs row: convex/errorMonitor.ts `listErrors` / `getError` `returns:` (full rows). */
+const errorRow = z.looseObject({
+	_id: rowId("The error log entry's ID: the errorId get_error takes."),
+	_creationTime: creationTime,
+	hash: z
+		.string()
+		.describe("The deduplication hash of the function name and error message."),
+	deployment: z
+		.string()
+		.describe("The monitored deployment the error came from."),
+	functionName: z.string().describe("The function that raised the error."),
+	errorMessage: z.string().describe("The error message."),
+	stackTrace: z
+		.string()
+		.optional()
+		.describe(
+			"The stack trace; absent when none was recorded, and on lite rows.",
+		),
+	firstSeen: ms("When the error was first seen"),
+	lastSeen: ms("When the error was last seen"),
+	count: z.number().describe("How many times the error was seen."),
+	issueNumber: z
+		.number()
+		.optional()
+		.describe("The GitHub issue opened for the error; absent when none was."),
+	githubRepo: z
+		.string()
+		.optional()
+		.describe(
+			"The repository that issue lives in; absent when none was opened.",
+		),
+	issueCreated: z
+		.boolean()
+		.optional()
+		.describe("True once the GitHub issue and its mission were created."),
+	irpMissionId: z
+		.string()
+		.optional()
+		.describe("The mission opened for the error; absent when none was."),
+	autoResolved: z
+		.boolean()
+		.optional()
+		.describe("True once the auto-resolver closed that mission."),
+	recurrenceThreshold: z
+		.number()
+		.optional()
+		.describe(
+			"How many occurrences open the issue, when it overrides the deployment default; absent otherwise.",
+		),
+	reRaiseBaselineCount: z
+		.number()
+		.optional()
+		.describe(
+			"The count recorded when a re-raise measurement window was armed; absent when none was.",
+		),
+	issueHistory: z
+		.array(
+			z.looseObject({
+				issueNumber: z
+					.number()
+					.describe("A GitHub issue the error was linked to."),
+				linkedAt: ms("When it was linked"),
+			}),
+		)
+		.optional()
+		.describe(
+			"Every GitHub issue the error was ever linked to, oldest first; absent when none.",
+		),
+});
+
+/** list_errors: a page of errorLogs rows (the text is a bare array, or { items, nextCursor }). */
+export const listErrorsServedOutputSchema = pageOf(
+	errorRow,
+	"The errors, newest first; empty when none matches.",
+);
+
+/**
+ * get_error: one errorLogs row in an `error` wrapper. The wrapper exists so that
+ * an absent entry stays a success: its text is null and structuredContent is
+ * { error: null }.
+ */
+export const getErrorServedOutputSchema = z.looseObject({
+	error: errorRow
+		.nullable()
+		.describe("The error log entry; null when none has that ID."),
+});
+
+/** add_deployment: the handler's own answer (errorMonitor:addDeployment returns the row ID). */
+export const addDeploymentServedOutputSchema = z.looseObject({
+	id: rowId("The monitored deployment's ID."),
+	name: z.string().describe("The deployment's name, as given."),
+	deploymentUrl: z.string().describe("The deployment URL, as given."),
+	githubRepo: z
+		.string()
+		.describe("The repository issues are opened in, as given."),
+	orchestrator: z
+		.string()
+		.describe("The orchestrator responsible for the deployment, as given."),
+});
+
+/** remove_deployment: the handler's own answer (errorMonitor:removeDeployment returns null). */
+export const removeDeploymentServedOutputSchema = z.looseObject({
+	removed: z
+		.string()
+		.describe("The name of the deployment that was deactivated."),
+});
+
+/** soft_delete_mission_template: the handler's own answer (missionTemplates:softDelete returns null). */
+export const softDeleteMissionTemplateServedOutputSchema = z.looseObject({
+	deleted: z.boolean().describe("True: the template was soft-deleted."),
+	templateId: z
+		.string()
+		.optional()
+		.describe("The template ID, as given; absent when it was named instead."),
+	name: z
+		.string()
+		.optional()
+		.describe("The template name, as given; absent when it was given by ID."),
+});
+
+/** validate_task_payload: the linter's ValidationResult (src/validate-task-payload.ts). */
+export const validateTaskPayloadServedOutputSchema = z.looseObject({
+	valid: z.boolean().describe("False when a hard-block violation was found."),
+	errors: z
+		.array(
+			z.looseObject({
+				field: z
+					.string()
+					.describe(
+						"The failing axis, as a dot-path, e.g. 'description.VERIFICATION'.",
+					),
+				message: z.string().describe("What is wrong."),
+				copy_paste_fix: z.string().describe("Text to paste to fix it."),
+			}),
+		)
+		.describe("The violations found; empty when none."),
+	warnings: z
+		.array(z.string())
+		.describe("Non-blocking findings; empty when none."),
+	auto_inject_applied: z
+		.array(z.string())
+		.describe(
+			"The axes for which a placeholder was injected; empty when none.",
+		),
+	modified_payload: z
+		.record(z.string(), z.unknown())
+		.optional()
+		.describe(
+			"The payload with the placeholders injected; absent when nothing was injected.",
+		),
+});
+
+/** validate_okf_bundle: okfBundleNode:validateOkfBundle `ValidateOkfBundleResult`. */
+export const validateOkfBundleServedOutputSchema = z.looseObject({
+	valid: z.boolean().describe("True when the bundle conforms to OKF v0.1."),
+	schemaVersion: z.string().describe("The OKF schema version checked: '0.1'."),
+	stats: z
+		.looseObject({
+			memoryCount: z.number().describe("How many memories the bundle holds."),
+			briefingCount: z
+				.number()
+				.describe("How many briefing notes the bundle holds."),
+			taskCount: z.number().describe("How many tasks the bundle holds."),
+		})
+		.describe("What the bundle holds."),
+	errors: z
+		.array(
+			z.looseObject({
+				path: z.string().describe("The bundle entry the violation is in."),
+				rule: z.string().describe("The OKF rule that was broken."),
+				message: z.string().describe("What is wrong."),
+			}),
+		)
+		.optional()
+		.describe("The violations found; absent when the bundle is valid."),
+});
+
+/** get_repo_mapping: githubRepoMapping:getByRepo `returns:` (a row; an absent mapping is an error, not a success). */
+export const getRepoMappingServedOutputSchema = repoMappingRow.extend({
+	clerkOrgId: clerkOrgId("mapping"),
 });
