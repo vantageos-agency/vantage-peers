@@ -169,7 +169,9 @@ export function decodeCursor(
  * model it, so a tool that forwards such a cursor tests this FIRST. This is the
  * one place that knows the shape (task k17egc72db260vvsg39qvvcnd18jx3w3).
  */
-export function isBackendTimeIdCursor(token: string | null | undefined): boolean {
+export function isBackendTimeIdCursor(
+	token: string | null | undefined,
+): boolean {
 	if (!token) return false;
 	try {
 		const parsed = JSON.parse(

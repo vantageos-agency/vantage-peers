@@ -73,46 +73,46 @@ function setup() {
 	return { handler, calls };
 }
 
-describe.each(["lite", "full"] as const)(
-	"list_repo_mappings cursor round-trip (%s)",
-	(fields) => {
-		it("serves page 2 from the nextCursor page 1 returned", async () => {
-			const { handler, calls } = setup();
-			const p1 = await handler({ limit: 1, fields });
-			expect(p1.isError).toBeFalsy();
-			const next = (p1.structuredContent as { nextCursor: string | null })
-				.nextCursor;
-			expect(next).toBe(CURSOR);
+describe.each([
+	"lite",
+	"full",
+] as const)("list_repo_mappings cursor round-trip (%s)", (fields) => {
+	it("serves page 2 from the nextCursor page 1 returned", async () => {
+		const { handler, calls } = setup();
+		const p1 = await handler({ limit: 1, fields });
+		expect(p1.isError).toBeFalsy();
+		const next = (p1.structuredContent as { nextCursor: string | null })
+			.nextCursor;
+		expect(next).toBe(CURSOR);
 
-			const p2 = await handler({ limit: 1, fields, cursor: next });
-			expect(p2.content[0]?.text ?? "").not.toMatch(/invalid cursor/i);
-			expect(p2.isError).toBeFalsy();
-			const body = p2.structuredContent as {
-				items: { repo: string }[];
-				nextCursor: string | null;
-			};
-			expect(body.items.map((r) => r.repo)).toEqual(["acme/r2"]);
-			expect(body.nextCursor).toBeNull();
-			// The Convex door received the cursor verbatim, not a createdBefore anchor.
-			expect(calls[1]?.cursor).toBe(CURSOR);
-			expect(calls[1]?.createdBefore).toBeUndefined();
-		});
+		const p2 = await handler({ limit: 1, fields, cursor: next });
+		expect(p2.content[0]?.text ?? "").not.toMatch(/invalid cursor/i);
+		expect(p2.isError).toBeFalsy();
+		const body = p2.structuredContent as {
+			items: { repo: string }[];
+			nextCursor: string | null;
+		};
+		expect(body.items.map((r) => r.repo)).toEqual(["acme/r2"]);
+		expect(body.nextCursor).toBeNull();
+		// The Convex door received the cursor verbatim, not a createdBefore anchor.
+		expect(calls[1]?.cursor).toBe(CURSOR);
+		expect(calls[1]?.createdBefore).toBeUndefined();
+	});
 
-		it("still refuses a garbage cursor with invalid_cursor", async () => {
-			const { handler } = setup();
-			const r = await handler({ limit: 1, fields, cursor: "bm90LWpzb24" });
-			expect(r.isError).toBe(true);
-			expect(r.content[0]?.text).toMatch(/invalid cursor/i);
-		});
+	it("still refuses a garbage cursor with invalid_cursor", async () => {
+		const { handler } = setup();
+		const r = await handler({ limit: 1, fields, cursor: "bm90LWpzb24" });
+		expect(r.isError).toBe(true);
+		expect(r.content[0]?.text).toMatch(/invalid cursor/i);
+	});
 
-		it("still honours the legacy { createdBefore } cursor", async () => {
-			const { handler, calls } = setup();
-			const legacy = Buffer.from(JSON.stringify({ createdBefore: 500 })).toString(
-				"base64url",
-			);
-			const r = await handler({ limit: 1, fields, cursor: legacy });
-			expect(r.isError).toBeFalsy();
-			expect(calls[0]?.createdBefore).toBe(500);
-		});
-	},
-);
+	it("still honours the legacy { createdBefore } cursor", async () => {
+		const { handler, calls } = setup();
+		const legacy = Buffer.from(JSON.stringify({ createdBefore: 500 })).toString(
+			"base64url",
+		);
+		const r = await handler({ limit: 1, fields, cursor: legacy });
+		expect(r.isError).toBeFalsy();
+		expect(calls[0]?.createdBefore).toBe(500);
+	});
+});
