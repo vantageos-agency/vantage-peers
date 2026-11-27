@@ -263,7 +263,7 @@ const TOOL_REGISTRY: Array<[string, string]> = [
 	],
 	[
 		"get_bu",
-		"Fetch a single business unit by Convex document ID; an error when none matches or the caller may not see it. WHEN: use before updating or reporting on a BU to get the current canonical state. EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
+		"Fetch a single business unit by Convex document ID, returning null if not found. WHEN: use before updating or reporting on a BU to get the current canonical state. EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 	],
 	[
 		"list_bus",
