@@ -60,7 +60,7 @@ async function call(
 		"my_tool",
 		"d",
 		{ x: z.string().optional() },
-		{ readOnlyHint: true },
+		{ readOnlyHint: true, outputSchema: {} },
 		// biome-ignore lint/suspicious/noExplicitAny: handler shape
 		handler as any,
 	);

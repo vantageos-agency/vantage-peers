@@ -86,6 +86,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{ namespace: z.string() },
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({ namespace: "team/other" });
@@ -101,6 +102,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{ namespace: z.string() },
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({ namespace: "team/acme/notes" });
@@ -116,6 +118,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{ namespace: z.string().optional() },
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({});
@@ -131,6 +134,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({});
@@ -146,6 +150,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({});
@@ -161,6 +166,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({});
@@ -176,6 +182,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({});
@@ -192,6 +199,7 @@ describe("defineTool — runtime scope enforcement (MUST_BLOCK / MUST_PASS)", ()
 			"t",
 			"d",
 			{ createdBy: z.string() },
+			{ outputSchema: {} },
 			okHandler,
 		);
 		const res = await invoke({ createdBy: "someone-else" });
@@ -210,6 +218,7 @@ describe("defineTool — type-level: scope is mandatory (RED at compile time)", 
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		expect(true).toBe(true);
@@ -226,6 +235,7 @@ describe("defineTool — type-level: scope is mandatory (RED at compile time)", 
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		expect(true).toBe(true);
@@ -241,6 +251,7 @@ describe("defineTool — type-level: scope is mandatory (RED at compile time)", 
 			"t",
 			"d",
 			{},
+			{ outputSchema: {} },
 			okHandler,
 		);
 		expect(true).toBe(true);

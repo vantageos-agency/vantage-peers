@@ -49,7 +49,7 @@ export async function fromGate(
 		"from_gate_probe",
 		"probe",
 		{ from: z.string().optional() },
-		{ readOnlyHint: true },
+		{ readOnlyHint: true, outputSchema: {} },
 		async () => {
 			reached.value = true;
 			return { content: [{ type: "text", text: "reached" }] };
