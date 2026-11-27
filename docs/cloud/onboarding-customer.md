@@ -389,7 +389,7 @@ A connected person writes as itself. Leave the acting field empty (`createdBy`, 
 
 **Operator prerequisites (Railway, set from the dashboard; names only)**
 
-`AUTHORIZE_STATE_SECRET` (at least 32 random characters), `CLERK_DOMAIN` (the Clerk frontend API URL), `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL` (`https://<your-deployment>/authorize/callback`), `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY`; optionally `AUTHORIZE_AUTHORIZED_PARTIES` (extra allowed origins, comma separated). While any required value is missing, `/authorize` answers **503** and issues nothing; it never falls back to approving. The sign-in page and this server must share a registrable domain so the Clerk `__session` cookie reaches `/authorize`.
+`AUTHORIZE_STATE_SECRET` (at least 32 random characters), `CLERK_DOMAIN` (the Clerk frontend API URL; required, no default since 6.0.0: unset, empty or whitespace-only is refused before any Clerk call, #1795), `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL` (`https://<your-deployment>/authorize/callback`), `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY`; optionally `AUTHORIZE_AUTHORIZED_PARTIES` (extra allowed origins, comma separated). While any required value is missing, `/authorize` answers **503** and issues nothing; it never falls back to approving. The sign-in page and this server must share a registrable domain so the Clerk `__session` cookie reaches `/authorize`.
 
 | Symptom | Cause | Resolution |
 |---|---|---|
@@ -428,7 +428,7 @@ Une personne connectée écrit en son nom. Laisser vide le champ d'acteur (`crea
 - Les autres outils d'écriture qui prennent un nom d'acteur n'ont pas de porte pour une personne et répondent `PERSON_NO_HUMAN_DOOR`.
 - Annuler ou supprimer reste réservé à `org:admin`, comme sur le dashboard.
 
-**Prérequis opérateur (Railway, à définir depuis le dashboard ; noms seulement)** : `AUTHORIZE_STATE_SECRET` (au moins 32 caractères aléatoires), `CLERK_DOMAIN`, `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL`, `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY` ; en option `AUTHORIZE_AUTHORIZED_PARTIES`. Tant qu'une valeur requise manque, `/authorize` répond **503** et n'émet rien ; il ne retombe jamais sur une approbation automatique.
+**Prérequis opérateur (Railway, à définir depuis le dashboard ; noms seulement)** : `AUTHORIZE_STATE_SECRET` (au moins 32 caractères aléatoires), `CLERK_DOMAIN` (requis, sans défaut depuis 6.0.0 : absent, vide ou fait d'espaces, il est refusé avant tout appel Clerk, #1795), `AUTHORIZE_SIGN_IN_URL`, `AUTHORIZE_CALLBACK_URL`, `PUBLIC_BASE_URL`, `CLERK_SECRET_KEY` ; en option `AUTHORIZE_AUTHORIZED_PARTIES`. Tant qu'une valeur requise manque, `/authorize` répond **503** et n'émet rien ; il ne retombe jamais sur une approbation automatique.
 
 ---
 
