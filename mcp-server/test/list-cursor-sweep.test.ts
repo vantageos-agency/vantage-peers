@@ -31,7 +31,10 @@ type Result = {
 type Handler = (args: unknown) => Promise<Result>;
 
 const TIME_ID = btoa(
-	JSON.stringify({ time: 1795640950830.9185, id: "kx742eys9n259cbjrvgrxgsnjs8jx320" }),
+	JSON.stringify({
+		time: 1795640950830.9185,
+		id: "kx742eys9n259cbjrvgrxgsnjs8jx320",
+	}),
 );
 const BACKEND_CURSOR = encodeCursor({ backendCursor: "opaque-convex-cursor" });
 const CREATED_BEFORE = encodeCursor({ createdBefore: 500 });
