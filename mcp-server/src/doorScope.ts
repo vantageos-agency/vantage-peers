@@ -85,6 +85,8 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"tasks:deleteTask": { verifiedOrg: "always" },
 	"tasks:blockTask": { verifiedOrg: "always" },
 	"tasks:nextForAssignee": { verifiedOrg: "always" },
+	// recurring schedules: a person acting in its own name carries its bearer hash
+	"recurringTasks:create": { verifiedPerson: true },
 	// missions
 	"missions:create": { verifiedPerson: true, verifiedOrg: "unless-person" },
 	"missions:update": { verifiedPerson: true },

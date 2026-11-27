@@ -2814,6 +2814,32 @@ export function registerTools(
 		const denial = identityUnresolvedOrgDenial(identityFacts(), door);
 		return denial === null ? null : mcpError(denial);
 	};
+	// S-28: the acting agent's verified ID, read from the verified oauthContext
+	// (verifiedActorOf), never from a tool argument, forwarded by the tool on every
+	// door that takes `verifiedActor`. The wrapped client adds the same claim; the
+	// tool states it so the call site shows it. One proof per call: a person acting
+	// in its own name (`scoped.verifiedPerson`) carries no actor beside it.
+	const actorClaim = (
+		scoped?: DoorScopeArgs,
+	): { verifiedActor?: typeof verifiedActor } =>
+		verifiedActor !== undefined && scoped?.verifiedPerson === undefined
+			? { verifiedActor }
+			: {};
+	// A door that judges its caller by the agent's verified ID alone refuses a call
+	// with none (RBAC_DENIED verified-actor-required). A Clerk-JWT session is its
+	// own identity and is judged by the door as itself, so it is not refused here
+	// when `sessionIsOwnIdentity` is set. Typed, BEFORE the call, like
+	// unresolvedOrgDenial.
+	const unverifiedActorDenial = (
+		door: string,
+		sessionIsOwnIdentity = false,
+	) => {
+		if (verifiedActor !== undefined) return null;
+		if (sessionIsOwnIdentity && oauthCtx?.clerkJwt !== undefined) return null;
+		return mcpError(
+			`RBAC_DENIED: ${door} needs the calling agent's verified ID and this bearer resolves none — ${JSON.stringify({ reason: "verified-actor-required", door })}`,
+		);
+	};
 	// Delegation guard — distinct question from the acting-name gates (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
 	// member of the CALLER's own organisation? Membership is read from DATA
@@ -3854,7 +3880,7 @@ export function registerTools(
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
-					queryArgs,
+					{ ...queryArgs, ...actorClaim() },
 				);
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
@@ -4078,6 +4104,7 @@ export function registerTools(
 				// matches namespaceReadPrefixes; otherwise null (non-leaky 404).
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
+					...actorClaim(),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// profiles rows (schema.ts:118) carry `orchestratorId`, NOT
@@ -4287,7 +4314,7 @@ export function registerTools(
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
-					queryArgs,
+					{ ...queryArgs, ...actorClaim() },
 				);
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
@@ -4915,11 +4942,17 @@ export function registerTools(
 				// agent, by ID. `recipient` is accepted for compatibility and ignored.
 				const orgUnresolved = unresolvedOrgDenial("list_blocked_on_me");
 				if (orgUnresolved) return orgUnresolved;
+				// The door reads the blocked tasks of the verified agent BY ID: a bearer
+				// that resolved none (an org-level token) has no reader, and the door
+				// refuses it claimless, so it is refused here, typed, before the call.
+				const actorDenied = unverifiedActorDenial("tasks:listBlockedOnMe", true);
+				if (actorDenied) return actorDenied;
 				const result = await convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					"tasks:listBlockedOnMe" as any,
 					{
 						...(tenantId !== undefined ? { tenantId } : {}),
+						...actorClaim(),
 					},
 				);
 				if (!isPlainObject(result) || !Array.isArray(result.entries)) {
@@ -5215,6 +5248,11 @@ export function registerTools(
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only profiles whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
+				// DECLARED DIVERGENCE (S-28): profiles:listProfiles takes verifiedActor, and
+				// the tool forwards none on purpose: the door narrows the master's list to
+				// the actor's organisation by stored agent ID, which withholds every legacy
+				// profile row that has none until the profile backfill has run (see
+				// VERIFIED_ACTOR_DOORS in verifiedActor.ts).
 				const profiles = await convex.query("profiles:listProfiles" as any, {
 					limit: effectiveLimit ?? 20,
 					fields: "lite",
@@ -7106,14 +7144,14 @@ export function registerTools(
 				if (orgDenied) return orgDenied;
 				const blockArgs: Record<string, any> = {
 					taskId: taskId as any,
+					...(reason ? { reason } : {}),
+					...(blockedOnTaskId
+						? { blockedOnTaskId: blockedOnTaskId as any }
+						: {}),
+					...(blockedCause ? { blockedCause } : {}),
+					...(callerOrchestrator ? { callerOrchestrator } : {}),
+					...doorScopeArgs("tasks:blockTask", callerOrchestrator),
 				};
-				if (reason) blockArgs.reason = reason;
-				if (blockedOnTaskId) blockArgs.blockedOnTaskId = blockedOnTaskId as any;
-				if (blockedCause) blockArgs.blockedCause = blockedCause;
-				if (callerOrchestrator)
-					blockArgs.callerOrchestrator = callerOrchestrator;
-
-				Object.assign(blockArgs, doorScopeArgs("tasks:blockTask", callerOrchestrator));
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
 
 				let resultingDependsOn: string[] | undefined;
@@ -7200,11 +7238,9 @@ export function registerTools(
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					addDependsOn: dependsOn.map((id: string) => id as any),
+					...(callerOrchestrator ? { callerOrchestrator } : {}),
+					...doorScopeArgs("tasks:update", callerOrchestrator),
 				};
-				if (callerOrchestrator)
-					updateArgs.callerOrchestrator = callerOrchestrator;
-
-				Object.assign(updateArgs, doorScopeArgs("tasks:update", callerOrchestrator));
 				await convex.mutation("tasks:update" as any, updateArgs);
 				// The door returns null; report the list it left on the row.
 				const row = (await convex.query("tasks:getById" as any, { taskId })) as {
@@ -8477,6 +8513,7 @@ export function registerTools(
 					content,
 					decisions,
 					linkedMemoryIds: linkedMemoryIds as any,
+					...actorClaim(),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -8937,6 +8974,7 @@ export function registerTools(
 						? tags
 						: [tags]
 					: undefined;
+				const scoped = doorScopeArgs("recurringTasks:create", createdBy);
 				const taskId = await convex.mutation("recurringTasks:create" as any, {
 					title,
 					description,
@@ -8946,6 +8984,8 @@ export function registerTools(
 					tags: tagsArray,
 					cronExpression,
 					createdBy,
+					...scoped,
+					...actorClaim(scoped),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9447,9 +9487,14 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
+				// The party acts BY ID: the door refuses a call with no verified agent
+				// ID, so the tool refuses it first, typed.
+				const actorDenied = unverifiedActorDenial("mandates:accept");
+				if (actorDenied) return actorDenied;
 				await convex.mutation("mandates:accept" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
+					...actorClaim(),
 				});
 
 				return {
@@ -9505,12 +9550,17 @@ export function registerTools(
 			linkedTaskIds,
 		}) => {
 			try {
+				// The party acts BY ID: the door refuses a call with no verified agent
+				// ID, so the tool refuses it first, typed.
+				const actorDenied = unverifiedActorDenial("mandates:update");
+				if (actorDenied) return actorDenied;
 				await convex.mutation("mandates:update" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
 					status,
 					tokensCost,
 					linkedTaskIds: linkedTaskIds as any,
+					...actorClaim(),
 				});
 
 				return {
@@ -9555,10 +9605,15 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
+				// The party acts BY ID: the door refuses a call with no verified agent
+				// ID, so the tool refuses it first, typed.
+				const actorDenied = unverifiedActorDenial("mandates:settle");
+				if (actorDenied) return actorDenied;
 				await convex.mutation("mandates:settle" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
 					finalCost,
+					...actorClaim(),
 				});
 
 				return {
@@ -9723,8 +9778,13 @@ export function registerTools(
 		},
 		async ({ roomId }) => {
 			try {
+				// The door serves a service-account call only with the agent's verified
+				// ID (a Clerk session is judged as itself): refuse it here, typed.
+				const actorDenied = unverifiedActorDenial("debate:getRoom", true);
+				if (actorDenied) return actorDenied;
 				const result = await convex.query("debate:getRoom" as any, {
 					roomId: roomId as any,
+					...actorClaim(),
 				});
 				if (result === null) {
 					return {
@@ -11581,6 +11641,7 @@ export function registerTools(
 						why,
 						createdBy,
 						commit,
+						...actorClaim(),
 					},
 				);
 
@@ -13002,6 +13063,9 @@ export function registerTools(
 				const row = await convex.query("fixPatterns:get" as any, {
 					patternId,
 					...rosterClaimArgs(oauthCtx),
+					// A fleet-master seat reads every pattern, so it is sent no actor
+					// (MASTER_UNNARROWED_DOORS); every other bearer is narrowed by its ID.
+					...(isMasterScope(oauthCtx) ? {} : actorClaim()),
 				});
 				if (row === null || row === undefined) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
@@ -13359,9 +13423,16 @@ export function registerTools(
 		},
 		async ({ windowDays, orchestrators }) => {
 			try {
+				// The fleet service account reads every tenant, so the door serves it
+				// only with the agent's verified ID: refuse a call with none, typed.
+				const actorDenied = unverifiedActorDenial(
+					"improvisationDigest:scanWindow",
+					true,
+				);
+				if (actorDenied) return actorDenied;
 				const result = await convex.query(
 					"improvisationDigest:scanWindow" as any,
-					{ windowDays, orchestrators },
+					{ windowDays, orchestrators, ...actorClaim() },
 				);
 				const served = withRealOrchestratorNames(result);
 				return {
