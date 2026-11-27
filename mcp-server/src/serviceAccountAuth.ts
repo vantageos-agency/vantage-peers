@@ -35,9 +35,12 @@
  *                                      decides from the stored service-account
  *                                      row whose authSubject is this value
  *                                      (see convex/lib/serviceAccount.ts).
- *   - CLERK_DOMAIN (optional)         Defaults to the existing Frontend API
- *                                      domain already used by mcp-server/src/auth.ts
- *                                      ("https://sharp-sponge-67.clerk.accounts.dev").
+ *   - CLERK_DOMAIN                    REQUIRED, no default. The Frontend API
+ *                                      origin of the Clerk instance that issued
+ *                                      CLERK_SECRET_KEY (prod:
+ *                                      "https://clerk.vantagepeers.com"). A
+ *                                      default would redeem a ticket minted on
+ *                                      one instance against another.
  *   - CLERK_JWT_TEMPLATE (optional)   Defaults to "convex" — must match a JWT
  *                                      template of that name configured in
  *                                      the Clerk dashboard (JWT Templates →
@@ -74,12 +77,27 @@ interface ServiceAccountConfig {
 	template: string;
 }
 
+/**
+ * CLERK_DOMAIN has no default. A ticket minted with CLERK_SECRET_KEY must be
+ * redeemed on the Frontend API of the SAME Clerk instance; a silent fallback
+ * to another instance fails with `ticket_invalid_code`, which reads as an
+ * outage. Refuses before any Clerk or network call.
+ */
+function requireClerkDomain(): string {
+	const domain = process.env.CLERK_DOMAIN;
+	if (!domain) {
+		throw new Error(
+			"CLERK_DOMAIN is not set: it must be the Frontend API origin of the Clerk instance that issued CLERK_SECRET_KEY (prod: https://clerk.vantagepeers.com). There is no default.",
+		);
+	}
+	return domain;
+}
+
 function loadConfig(): ServiceAccountConfig | null {
 	const secretKey = process.env.CLERK_SECRET_KEY;
 	const userId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
 	if (!secretKey || !userId) return null;
-	const domain =
-		process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
+	const domain = requireClerkDomain();
 	const template = process.env.CLERK_JWT_TEMPLATE ?? "convex";
 	return { secretKey, userId, domain, template };
 }
@@ -239,8 +257,7 @@ export async function getScopedUserToken(
 ): Promise<string | null> {
 	const secretKey = process.env.CLERK_SECRET_KEY;
 	if (!secretKey) return null;
-	const domain =
-		process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
+	const domain = requireClerkDomain();
 
 	const deps = overrideScopedDeps ?? buildDefaultScopedDeps(secretKey);
 

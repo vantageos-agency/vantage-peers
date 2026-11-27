@@ -137,6 +137,12 @@ async function attachServiceAccountAuthIfConfigured(client) {
 	if (!process.env.CLERK_SECRET_KEY || !process.env.CLERK_SERVICE_ACCOUNT_USER_ID) {
 		return;
 	}
+	if (!process.env.CLERK_DOMAIN) {
+		console.error(
+			"CLERK_DOMAIN is not set: it must be the Frontend API origin of the Clerk instance that issued CLERK_SECRET_KEY (prod: https://clerk.vantagepeers.com). There is no default.",
+		);
+		process.exit(1);
+	}
 	try {
 		const { getServiceAccountToken } = await import(
 			"../mcp-server/dist/src/serviceAccountAuth.js"

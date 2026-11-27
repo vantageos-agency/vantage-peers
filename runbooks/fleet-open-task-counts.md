@@ -31,8 +31,10 @@ the same pass but not counted.
   `stats:openTaskCountsByOrchestrator` (push with
   `CONVEX_DEPLOY_KEY=<key> npx convex dev --once` for dev, or the standard
   prod deploy flow for prod — never as part of this runbook).
-- `CLERK_SECRET_KEY` and `CLERK_SERVICE_ACCOUNT_USER_ID` set in the shell
-  environment (same values already used by the MCP server — see
+- `CLERK_SECRET_KEY`, `CLERK_SERVICE_ACCOUNT_USER_ID` and `CLERK_DOMAIN` (the
+  Frontend API origin of the Clerk instance that issued the secret key, prod
+  `https://clerk.vantagepeers.com`; no default, the script exits 1 without it)
+  set in the shell environment (same values already used by the MCP server — see
   `mcp-server/src/serviceAccountAuth.ts`). The query is gated behind
   `withOrgScope`'s master-scope check (`view-stats-aggregated`), which
   requires a verified Clerk identity. The script mints a short-lived
@@ -50,6 +52,7 @@ the same pass but not counted.
 CONVEX_URL=https://<deployment>.convex.cloud \
 CLERK_SECRET_KEY=<secret> \
 CLERK_SERVICE_ACCOUNT_USER_ID=<user_id> \
+CLERK_DOMAIN=<frontend-api-origin> \
 node scripts/vp-fleet-stats.mjs --csv qa/fleet-open-task-counts-<YYYY-MM-DD>.csv
 ```
 

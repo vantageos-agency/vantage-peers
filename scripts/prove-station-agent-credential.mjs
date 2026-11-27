@@ -70,6 +70,7 @@ async function main() {
 	const station = normalizeRole(args.station);
 	const convexUrl = requireEnv("CONVEX_URL");
 	requireEnv("CLERK_SECRET_KEY");
+	requireEnv("CLERK_DOMAIN");
 	const orgAdminUserId = requireEnv("CLERK_ORG_ADMIN_USER_ID");
 
 	const jwt = await getScopedUserToken(orgAdminUserId);

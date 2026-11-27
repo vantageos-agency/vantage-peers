@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **VantagePeers Cloud and Self-host: the MCP service-account mint refuses an unset `CLERK_DOMAIN` instead of falling back to a dev Clerk instance (task k172bj3j3yts4n76qwcr8waawd8k0r3c).** With a live `CLERK_SECRET_KEY` and no `CLERK_DOMAIN`, `getServiceAccountToken` and `getScopedUserToken` minted a sign-in ticket on the live instance and redeemed it on a hardcoded dev instance, failing with Clerk HTTP 400 `ticket_invalid_code`, which read as an outage. Both now throw before any Clerk or network call, naming `CLERK_DOMAIN` and saying it must be the Frontend API origin of the instance that issued `CLERK_SECRET_KEY`. `deploy/env-manifest.json` lists `CLERK_DOMAIN` as required for the Railway MCP. Pinned by `mcp-server/src/__tests__/serviceAccountClerkDomain.test.ts`.
