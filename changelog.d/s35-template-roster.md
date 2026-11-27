@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **`missionTemplates:getByName` applies a non-master caller's own roster inside the read (task k17edzy4wpq0ng4cbytgj8ev6n8k0hsd).** A non-master bearer with no resolvable organisation but a roster reached the door with no `verifiedOrg`, and the MCP narrowed the template after the read. The door now takes `callerRoster`, believed from the fleet service account only and ignored from anyone else, and returns the template only when its creator passes the package's `passesScopeFilter` on that roster (the same predicate and label normalisation as the MCP's `scopeFilterGet`); otherwise `null`. `verifiedOrg` wins when both are carried, and a call with neither is served as before. `get_mission_template` forwards the roster when no organisation is derived and keeps its after-read filter. Backend contract version 36 to 37 (the MCP passes a new argument to an existing function): deploy Convex first, then the MCP.
