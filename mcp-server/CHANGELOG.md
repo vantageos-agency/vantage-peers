@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [5.2.0] — 2026-11-27
+
+A minor release: `check_repo_routing` gains one output bucket and `list_repo_mappings` serves out-of-scope rows. No tool is added or removed and no tool input changes. Each entry names the product it concerns.
+
+### Fixed
+
+- Cloud and Self-host: `list_repo_mappings` serves out-of-scope rows again. An out-of-scope row carries no `orchestrator`, but the output schema still required one, so every page holding such a row failed output validation (lite and full). `orchestrator` is now optional (absent on an out-of-scope row), and the schema describes `outOfScope`, `orchestratorAgentId`, `reviewerAgentId` and `fallbackReviewerAgentId`. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Added
+
+- Cloud and Self-host: `check_repo_routing` run for the operator organisation counts, in a new `routedElsewhere` number, the repos of your list that have a row in another organisation (a client's repos are routed in the client's organisation). They are not `missing` and do not block `complete`. It never names that organisation, its owner or its content, and `get_repo_route` still answers `absent` for another organisation's row. A client organisation's own check is unchanged. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Changed
+
+- Self-host: the server requires backend contract version 34 (5.1.0: 33) and calls 155 backend functions (5.1.0: 154, + `githubRepoMapping:routedElsewhere`). A backend of contract 33 is refused at start. Deploy the backend of this release first, then upgrade this package. VantagePeers Cloud already serves contract 34. ([Backend compatibility check](README.md#backend-compatibility-check))
+
 ## [5.1.0] — 2026-11-25
 
 A minor release: two new read tools. No existing tool input or output changes. Each entry names the product it concerns.
