@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
 	_loadConfigForTest,
 	_resetServiceAccountCacheForTest,
+	_setScopedUserTokenDepsForTest,
 	_setServiceAccountDepsForTest,
 	getScopedUserToken,
 	getServiceAccountToken,
@@ -29,6 +30,7 @@ beforeEach(() => {
 afterEach(() => {
 	process.env = { ...ORIGINAL_ENV };
 	_setServiceAccountDepsForTest(null);
+	_setScopedUserTokenDepsForTest(null);
 	_resetServiceAccountCacheForTest();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
@@ -47,6 +49,12 @@ describe.each([
 			process.env.CLERK_DOMAIN = "";
 		},
 	},
+	...["   ", "\n", "\t"].map((value) => ({
+		label: `whitespace-only ${JSON.stringify(value)}`,
+		apply: () => {
+			process.env.CLERK_DOMAIN = value;
+		},
+	})),
 ])("CLERK_DOMAIN $label", ({ apply }) => {
 	test("getServiceAccountToken rejects naming CLERK_DOMAIN and makes no fetch", async () => {
 		apply();
@@ -86,5 +94,29 @@ describe("CLERK_DOMAIN set", () => {
 		delete process.env.CLERK_SECRET_KEY;
 		expect(await getServiceAccountToken()).toBeNull();
 		expect(await getScopedUserToken("user_x")).toBeNull();
+	});
+
+	test("surrounding whitespace is trimmed in loadConfig", () => {
+		process.env.CLERK_DOMAIN = "  https://clerk.example.test \n";
+		expect(_loadConfigForTest()?.domain).toBe("https://clerk.example.test");
+	});
+
+	test("getScopedUserToken hands the trimmed origin to the exchange", async () => {
+		process.env.CLERK_DOMAIN = "  https://clerk.example.test \n";
+		const exchange = vi.fn(async () => "sess_x");
+		_setScopedUserTokenDepsForTest({
+			createSignInTicket: async () => "ticket_x",
+			exchangeTicketForSession: exchange,
+			getNativeSessionToken: async () => ({
+				jwt: "jwt_x",
+				exp: Date.now() + 60_000,
+			}),
+		});
+
+		await getScopedUserToken("user_x");
+		expect(exchange).toHaveBeenCalledWith(
+			"ticket_x",
+			"https://clerk.example.test",
+		);
 	});
 });
