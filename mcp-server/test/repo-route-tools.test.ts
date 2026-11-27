@@ -403,6 +403,28 @@ describe("check_repo_routing", () => {
 		expect(doors[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
 	});
 
+	it("more than 500 absent repos are asked of routedElsewhere in batches of 500 and the answers are merged", async () => {
+		const repos = Array.from({ length: 501 }, (_, i) => `client/r${i}`);
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos },
+			{
+				pages: [{ items: [], nextCursor: null }],
+				elsewhere: { applicable: true, elsewhere: ["client/r0", "client/r500"] },
+			},
+		);
+		const doors = r.calls.filter(
+			(c) => c.name === "githubRepoMapping:routedElsewhere",
+		);
+		expect(doors).toHaveLength(2);
+		expect((doors[0].args.repos as string[]).length).toBe(500);
+		expect(doors[1].args.repos).toEqual(["client/r500"]);
+		expect(r.body?.routedElsewhere).toBe(2);
+		expect((r.body?.missing as string[]).length).toBe(499);
+		expect(r.body?.complete).toBe(false);
+	});
+
 	it("a repo with no row anywhere is still missing beside one routed elsewhere", async () => {
 		const r = await run(
 			"check_repo_routing",
