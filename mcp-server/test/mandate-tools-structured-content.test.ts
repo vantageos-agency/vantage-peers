@@ -236,7 +236,7 @@ describe("settle_mandate", () => {
 		const h = harness({ "mandates:settle": () => null }, VERIFIED_AGENT);
 		const res = await success(h, "settle_mandate", {
 			mandateId: MANDATE_ID,
-			callerOrchestrator: "alpha",
+			callerOrchestrator: "beta",
 			finalCost: 4800,
 		});
 		expect(res.structuredContent).toEqual({
