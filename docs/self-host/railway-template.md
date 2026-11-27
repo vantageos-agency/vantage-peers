@@ -24,13 +24,13 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `5.1.0` | `grep '"version"' mcp-server/package.json` -> `"version": "5.1.0"` |
+| Package version | `5.2.0` | `grep '"version"' mcp-server/package.json` -> `"version": "5.2.0"` |
 | npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
 | Tools **registered** by the server | `123` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 123`, `registered names 123 vs documented names 123` |
 | Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
 | Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 123 - 97 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
-| Backend contract version required | `30` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 30`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 30` |
+| Backend contract version required | `34` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 34`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 34` |
 | Backend functions the server calls | `155` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
 A deployer's MCP client sees 97 tools, not 123. The server masks non-`core`
@@ -41,7 +41,7 @@ tools stay registered but a client can neither list nor call them
 around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
-Not the same as the published release: the numbers 123 / 97 / contract 30 /
+Not the same as the published release: the numbers 123 / 97 / contract 34 /
 155 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
@@ -187,7 +187,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",
