@@ -253,6 +253,16 @@ const DENIED_SCOPE_CTX: OAuthContext = {
 };
 
 /**
+ * S-35: a door that only the fleet master may read is decided BEFORE the read,
+ * from the caller's verified context. A caller outside it gets the answer the
+ * after-read scopeFilterGet gave (a row with no owner field is emptied for a
+ * non-master), and the door is never called. Absence is never master.
+ */
+function mayReadMasterOnlyDoor(ctx: OAuthContext | undefined): boolean {
+	return ctx !== undefined && isMasterScope(ctx);
+}
+
+/**
  * Append a stream marker to a text response when UI markers are enabled.
  * `buildPayload` is called only when the flag is ON to avoid any overhead.
  */
@@ -11278,15 +11288,13 @@ export function registerTools(
 		},
 		async ({ repo, issueNumber }) => {
 			try {
-				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
-				const issue = await convex.query("issues:getByRepoNumber" as any, {
-					repo,
-					issueNumber,
-				});
-				const filteredIssue = scopeFilterGet(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					issue as any,
-				);
+				// master-only door, decided before the read (S-35).
+				const filteredIssue = mayReadMasterOnlyDoor(oauthCtx)
+					? await convex.query("issues:getByRepoNumber" as any, {
+							repo,
+							issueNumber,
+						})
+					: null;
 
 				// An issue that is not there is a success: its text says so, and
 				// structuredContent is { issue: null }.
@@ -11500,14 +11508,12 @@ export function registerTools(
 		},
 		async ({ project }) => {
 			try {
-				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
-				const stats = await convex.query("issues:getStats" as any, {
-					project,
-				});
-				const filteredStats = scopeFilterGet(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					stats as any,
-				);
+				// master-only door, decided before the read (S-35).
+				const filteredStats = mayReadMasterOnlyDoor(oauthCtx)
+					? await convex.query("issues:getStats" as any, {
+							project,
+						})
+					: null;
 
 				// issues:getStats always answers an object; a master caller is never
 				// filtered. Anything else is not a statistics answer: refuse it
@@ -12020,6 +12026,7 @@ export function registerTools(
 					"missionTemplates:getByName" as any,
 					{ name },
 				);
+				// S-35: the door is master-only but members see their own templates through this filter — scoping it inside the read needs a per-tenant door (sigma), kept after-read until then.
 				const filteredTemplate = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					template as any,
