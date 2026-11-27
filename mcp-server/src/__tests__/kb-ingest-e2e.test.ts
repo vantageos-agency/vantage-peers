@@ -90,6 +90,7 @@ const now = Date.now();
 /** Clerk JWT with org_id = "org-A" — the happy path fixture. */
 const teamACtx: OAuthContext = {
 	clientId: "dcr-clerk-org-A",
+	clerkJwt: "jwt-org-A",
 	userId: "user-123",
 	scopes: ["mcp:full"],
 	scopeProfile: "team-member",
