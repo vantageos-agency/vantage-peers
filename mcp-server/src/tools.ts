@@ -258,7 +258,7 @@ const DENIED_SCOPE_CTX: OAuthContext = {
  * after-read scopeFilterGet gave (a row with no owner field is emptied for a
  * non-master), and the door is never called. Absence is never master.
  */
-function mayReadMasterOnlyDoor(ctx: OAuthContext | undefined): boolean {
+export function mayReadMasterOnlyDoor(ctx: OAuthContext | undefined): boolean {
 	return ctx !== undefined && isMasterScope(ctx);
 }
 
