@@ -6,6 +6,10 @@
  * mock is asserted NOT called. A master caller is forwarded unchanged: the door is
  * called once with the tool's arguments. The answers themselves are pinned by
  * s35-master-only-doors-pin.test.ts.
+ *
+ * The wrapper's { kind: "master" } on get_issue and issue_stats makes the in-handler check
+ * unreachable through registerTools; s35-master-only-doors-handler.test.ts and
+ * s35-may-read-master-only-door.test.ts exist to cover it.
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";

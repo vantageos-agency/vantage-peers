@@ -12,6 +12,10 @@
  *   master     scopeProfile "master", fromAllowList ["*"]
  *   member     scopeProfile "tenant", an org member's bearer (not master)
  *   no context no oauthContext at all
+ *
+ * The wrapper's { kind: "master" } on get_issue and issue_stats makes the in-handler check
+ * unreachable through registerTools; s35-master-only-doors-handler.test.ts and
+ * s35-may-read-master-only-door.test.ts exist to cover it.
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";
