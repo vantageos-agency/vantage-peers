@@ -41,6 +41,7 @@ import {
 	verifiedOrgIdOf,
 	verifiedOrgSlugOf,
 } from "../doorScope.js";
+import { unresolvedOrgDenial as identityUnresolvedOrgDenial } from "../identityDenial.js";
 import {
 	claimUploadServedOutputSchema,
 	generateUploadUrlServedOutputSchema,
@@ -288,12 +289,18 @@ export function registerKbIngestTools(
 	// that would take the namespace on its word. The master is refused earlier by
 	// resolveOrgContext (store/soft-delete/generate) and keeps its path in claim_upload.
 	const unresolvedOrgDenial = (tool: string, door: string): void => {
-		if (oauthCtx?.isMaster === true || oauthCtx?.clerkJwt !== undefined) return;
-		if (verifiedOrgSlugOf(oauthCtx) !== undefined) return;
-		throw new ProtocolError(
-			ProtocolErrorCode.InvalidRequest,
-			`RBAC_DENIED: ${tool} needs the caller's verified organisation and this bearer resolves none — ${JSON.stringify({ reason: "verified-org-unresolved", door })}`,
+		const denial = identityUnresolvedOrgDenial(
+			{
+				isMaster: oauthCtx?.isMaster === true,
+				hasClerkJwt: oauthCtx?.clerkJwt !== undefined,
+				verifiedOrg: verifiedOrgSlugOf(oauthCtx),
+				hasVerifiedActor: false,
+			},
+			door,
+			tool,
 		);
+		if (denial === null) return;
+		throw new ProtocolError(ProtocolErrorCode.InvalidRequest, denial);
 	};
 
 	// All KB-ingest tools enforce tenant isolation in-handler via
