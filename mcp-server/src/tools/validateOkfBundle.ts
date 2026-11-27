@@ -21,6 +21,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import { validateOkfBundleServedOutputSchema } from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +96,7 @@ export function registerValidateOkfBundle(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Validate OKF bundle",
+			outputSchema: validateOkfBundleServedOutputSchema,
 		},
 		async ({ bundleUrl, storageId }) => {
 			try {
@@ -117,6 +119,7 @@ export function registerValidateOkfBundle(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result as unknown as Record<string, unknown>,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;

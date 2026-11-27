@@ -112,6 +112,13 @@ import {
 	deleteBuServedOutputSchema,
 	listIssuesServedOutputSchema,
 	getIssueServedOutputSchema,
+	addDeploymentServedOutputSchema,
+	getErrorServedOutputSchema,
+	getRepoMappingServedOutputSchema,
+	listErrorsServedOutputSchema,
+	removeDeploymentServedOutputSchema,
+	softDeleteMissionTemplateServedOutputSchema,
+	validateTaskPayloadServedOutputSchema,
 	updateIssueStatusServedOutputSchema,
 	linkCommitToIssueServedOutputSchema,
 	verifyIssueServedOutputSchema,
@@ -12297,6 +12304,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete mission template (soft)",
+			outputSchema: softDeleteMissionTemplateServedOutputSchema,
 		},
 		async ({ templateId, name }) => {
 			try {
@@ -12312,17 +12320,12 @@ export function registerTools(
 					name,
 				});
 
+				const structured = { deleted: true, templateId, name };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ deleted: true, templateId, name },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12372,6 +12375,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Add deployment",
+			outputSchema: addDeploymentServedOutputSchema,
 		},
 		async ({
 			name,
@@ -12391,17 +12395,18 @@ export function registerTools(
 					githubRepo,
 					orchestrator,
 				});
+				const structured = {
+					id,
+					name,
+					deploymentUrl,
+					githubRepo,
+					orchestrator,
+				};
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ id, name, deploymentUrl, githubRepo, orchestrator },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12434,6 +12439,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Remove deployment",
+			outputSchema: removeDeploymentServedOutputSchema,
 		},
 		async ({ name }) => {
 			// C0.1: infrastructure-level — master scope only
@@ -12441,13 +12447,12 @@ export function registerTools(
 			if (masterDenied) return masterDenied;
 			try {
 				await convex.mutation("errorMonitor:removeDeployment" as any, { name });
+				const structured = { removed: name };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ removed: name }, null, 2),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12512,6 +12517,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List errors",
+			outputSchema: listErrorsServedOutputSchema,
 		},
 		async ({ deployment, limit, fields, cursor }) => {
 			// k177617dqg6z5c099p1rdp5rqn8b2rp0 — errorLogs has no client-owner
@@ -12566,17 +12572,27 @@ export function registerTools(
 						? { items: filteredErrors, nextCursor }
 						: filteredErrors;
 
+				// The text is the bare array (or the { items, nextCursor } page),
+				// unchanged; structuredContent is its page form. A page the cap cut
+				// says so in both channels and carries the cursor that continues
+				// after the last row shown (capPage).
+				const capped = capPage(
+					errorsWithCursor,
+					"list_errors",
+					"page",
+					undefined,
+					(shown) => {
+						const last = shown[shown.length - 1] as
+							| { _creationTime?: number }
+							| undefined;
+						return typeof last?._creationTime === "number"
+							? encodeCursor({ createdBefore: last._creationTime })
+							: null;
+					},
+				);
 				return {
-					content: [
-						{
-							type: "text",
-							text: capListResponseBytes(
-								errorsWithCursor,
-								JSON.stringify(errorsWithCursor, null, 2),
-								"list_errors",
-							),
-						},
-					],
+					content: [{ type: "text", text: capped.text }],
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12606,6 +12622,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get error",
+			outputSchema: getErrorServedOutputSchema,
 		},
 		async ({ errorId }) => {
 			// k177617dqg6z5c099p1rdp5rqn8b2rp0 — redundant legacy-bearer guard,
@@ -12619,6 +12636,8 @@ export function registerTools(
 					errorId: errorId as any,
 				});
 				const filteredError = error;
+				// An entry that is not there is a success: its text is null and
+				// structuredContent is { error: null }.
 				return {
 					content: [
 						{
@@ -12626,6 +12645,9 @@ export function registerTools(
 							text: JSON.stringify(filteredError, null, 2),
 						},
 					],
+					structuredContent: {
+						error: (filteredError ?? null) as Record<string, unknown> | null,
+					},
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12968,6 +12990,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Validate task payload (lint dry-run)",
+			outputSchema: validateTaskPayloadServedOutputSchema,
 		},
 		({ tool_name, payload }) => {
 			const result = validateTaskPayload(
@@ -12981,6 +13004,7 @@ export function registerTools(
 						text: JSON.stringify(result, null, 2),
 					},
 				],
+				structuredContent: result as unknown as Record<string, unknown>,
 			};
 		},
 	);
@@ -13216,6 +13240,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get repo mapping",
+			outputSchema: getRepoMappingServedOutputSchema,
 		},
 		async ({ repo }) => {
 			try {
@@ -13256,6 +13281,7 @@ export function registerTools(
 				}
 				return {
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					structuredContent: filtered,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

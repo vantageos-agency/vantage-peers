@@ -626,6 +626,15 @@ export function defineTool(
 		memberAuthorDoor?: boolean;
 	} & ToolAnnotations;
 
+	// Every tool declares the shape of its structuredContent: a registration
+	// without an outputSchema fails here, at registration, naming the tool, so a
+	// tool can no longer be served without one (mcp-doctor S-51).
+	if (outputSchema === undefined) {
+		throw new Error(
+			`defineTool: the tool "${name}" declares no outputSchema. Every tool declares one and answers structuredContent; add \`outputSchema\` to its annotations object (src/outputSchemas.ts).`,
+		);
+	}
+
 	const actingKeys = actingNameKeys(scope, schema);
 	// A `read` tool whose namespace the schema lets a caller omit. Only such a
 	// tool says it can be omitted (READ_NAMESPACE_NOTE) and only such a tool is
@@ -792,14 +801,10 @@ export function defineTool(
 			annotations: declaredAnnotations === undefined ? undefined : annotations,
 			// @modelcontextprotocol/server 2.x takes a Standard Schema object for
 			// outputSchema (raw shapes are not auto-wrapped there): wrap one here.
-			...(outputSchema !== undefined
-				? {
-						outputSchema:
-							outputSchema instanceof z.ZodType
-								? outputSchema
-								: z.object(outputSchema),
-					}
-				: {}),
+			outputSchema:
+				outputSchema instanceof z.ZodType
+					? outputSchema
+					: z.object(outputSchema),
 		},
 		guardedHandler,
 	);
