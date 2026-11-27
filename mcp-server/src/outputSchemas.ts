@@ -2973,3 +2973,111 @@ export const listMandatesServedOutputSchema = pageOf(
 	"The mandates, newest first; empty when none matches the filters. Every row carries every stored field.",
 	{ scopeFiltered: pageScopeFiltered },
 );
+
+// ── business units (the BU tools; mcp-doctor S-51 / S-53) ────────────────────
+// Rows come from convex/businessUnits.ts: `buObject` is the `returns:` shape of
+// businessUnits:get and of the full rows of businessUnits:list; `liteValidator`
+// is the list's fields="lite" projection.
+
+const buStatusField = z
+	.string()
+	.describe(
+		"Where the business unit is in its life: idea, building, live or revenue.",
+	);
+
+/** A full business-unit row: convex/businessUnits.ts `buObject`. */
+const buRow = z.looseObject({
+	_id: rowId("The business unit's ID: the buId the BU tools take."),
+	_creationTime: creationTime,
+	name: z.string().describe("The business unit's name."),
+	description: z.string().describe("A short description of the business unit."),
+	purpose: z.string().describe("Why the business unit exists."),
+	domain: z
+		.string()
+		.optional()
+		.describe("Its primary domain; absent when none was set."),
+	orchestratorId: z
+		.string()
+		.describe("The lead orchestrator that manages the business unit."),
+	status: buStatusField,
+	businessModel: z.string().describe("How the business unit makes money."),
+	targetCustomers: z.string().describe("Who its customers are."),
+	services: z.array(z.string()).describe("The services it offers."),
+	pricing: z.string().describe("Its pricing model."),
+	revenueProjections: z
+		.looseObject({
+			y1: z.number().describe("Projected revenue, year 1."),
+			y2: z.number().describe("Projected revenue, year 2."),
+			y3: z.number().describe("Projected revenue, year 3."),
+		})
+		.describe("Its revenue projections for the next three years."),
+	coreTeam: z
+		.looseObject({
+			agents: z.array(z.string()).describe("The agents of the core team."),
+			skills: z.array(z.string()).describe("The skills the team relies on."),
+			hooks: z.array(z.string()).describe("The hooks the team relies on."),
+			plugins: z.array(z.string()).describe("The plugins the team relies on."),
+		})
+		.describe("Its core team: agents, skills, hooks and plugins."),
+	coreProcesses: z
+		.array(z.string())
+		.describe("Its core operational processes."),
+	dependencies: z
+		.array(z.string())
+		.describe("The names of the business units it depends on."),
+	kpis: z.array(z.string()).describe("Its key performance indicators."),
+	managementFee: z.number().describe("The management fee, in percent."),
+	createdAt: ms("When the business unit was created"),
+	updatedAt: ms("When the business unit last changed"),
+	orgId: z
+		.string()
+		.optional()
+		.describe("The organisation it belongs to; absent on a fleet row."),
+	clerkOrgId: z
+		.string()
+		.optional()
+		.describe(
+			"The identity-provider ID of that organisation; absent when none.",
+		),
+	ownerId: actorId("the owning agent"),
+});
+
+/** A list_bus row with fields="lite": convex/businessUnits.ts `liteValidator`. */
+const buLiteRow = z.looseObject({
+	_id: rowId("The business unit's ID: the buId the BU tools take."),
+	_creationTime: creationTime,
+	name: z.string().describe("The business unit's name."),
+	status: buStatusField,
+	orchestratorId: z
+		.string()
+		.describe("The lead orchestrator that manages the business unit."),
+});
+
+/** create_bu: the handler's own answer. */
+export const createBuServedOutputSchema = z.looseObject({
+	buId: rowId("The new business unit: the buId the other BU tools take."),
+	name: z.string().describe("The business unit's name, as given."),
+	orchestratorId: z.string().describe("The lead orchestrator, as given."),
+	status: buStatusField,
+});
+
+/** update_bu: the handler's own answer (businessUnits:update returns null). */
+export const updateBuServedOutputSchema = z.looseObject({
+	buId: rowId("The business unit that was updated."),
+	updated: z.boolean().describe("True: the update was recorded."),
+});
+
+/** get_bu: one business unit row, as stored. */
+export const getBuServedOutputSchema = buRow;
+
+/** list_bus: business units, newest first; full rows, or the lite projection. */
+export const listBusServedOutputSchema = pageOf(
+	z.union([buRow, buLiteRow]),
+	"The business units, newest first; empty when none matches the filters. Every row carries every stored field, or with fields=lite only its ID, name, status and lead orchestrator.",
+	{ scopeFiltered: pageScopeFiltered },
+);
+
+/** delete_bu: businessUnits:remove `returns:`. */
+export const deleteBuServedOutputSchema = z.looseObject({
+	deleted: z.boolean().describe("True when the business unit was deleted."),
+});
