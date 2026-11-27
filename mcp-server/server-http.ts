@@ -2694,12 +2694,8 @@ if (process.env.VP_TEST_MODE !== "1") {
 	});
 
 	console.log(
-		`[vantage-peers-mcp] HTTP transport listening on ${server.hostname}:${server.port}`,
+		`[vantage-peers-mcp] HTTP transport listening on port ${server.port}`,
 	);
-	console.log(
-		`[vantage-peers-mcp] Health: http://${server.hostname}:${server.port}/health`,
-	);
-	console.log(
-		`[vantage-peers-mcp] MCP:    http://${server.hostname}:${server.port}/mcp`,
-	);
+	console.log(`[vantage-peers-mcp] Health: /health`);
+	console.log(`[vantage-peers-mcp] MCP:    /mcp`);
 }
