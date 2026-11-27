@@ -12042,7 +12042,6 @@ export function registerTools(
 		async ({ name }) => {
 			try {
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
-				// allow-local-identity: forwards the verified context's own roster to the door that decides; no local compare.
 				// S-35: with a verified org the door applies that org's roster inside the
 				// read; a non-master bearer with no resolvable org presents its OWN roster
 				// (`callerRoster`) and the door applies it the same way (task
