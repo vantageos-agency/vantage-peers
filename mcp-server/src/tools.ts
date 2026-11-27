@@ -12031,7 +12031,7 @@ export function registerTools(
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
 				const template = await convex.query(
 					"missionTemplates:getByName" as any,
-					{ name },
+					{ name, ...doorScopeArgs("missionTemplates:getByName", undefined) },
 				);
 				// S-35: the door is master-only but members see their own templates through this filter — scoping it inside the read needs a per-tenant door (sigma), kept after-read until then.
 				const filteredTemplate = scopeFilterGet(
