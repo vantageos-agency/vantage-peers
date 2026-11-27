@@ -24,7 +24,7 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `5.2.1` | `grep '"version"' mcp-server/package.json` -> `"version": "5.2.1"` |
+| Package version | `6.0.0` | `grep '"version"' mcp-server/package.json` -> `"version": "6.0.0"` |
 | npm published version | read it at deploy time (registry state, not held on this page) | `npm view vantage-peers-mcp dist-tags` |
 | Tools **registered** by the server | `123` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 123`, `registered names 123 vs documented names 123` |
 | Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
@@ -91,6 +91,7 @@ Required for the HTTP server to serve a request:
 | `CONVEX_URL_INTERNAL` | **Yes** | `buildInternalClient()` throws `CONVEX_URL_INTERNAL is required for HTTP transport. Set it to your internal VantagePeers Convex deployment URL.`; boot calls `internalClient()` first (`server-http.ts:2328`) | `mcp-server/src/auth.ts:294-300` |
 | `CLERK_SECRET_KEY` | **Yes, for any Convex call** | Every Convex call through the server's internal client is refused: `no service-account identity available (CLERK_SECRET_KEY / CLERK_SERVICE_ACCOUNT_USER_ID not configured) — refusing to send an unauthenticated Convex <method>()` | `mcp-server/src/serviceAccountAuth.ts:77-84`, `mcp-server/src/authenticatedConvexClient.ts:231-232` |
 | `CLERK_SERVICE_ACCOUNT_USER_ID` | **Yes, for any Convex call** | Same refusal as above. Clerk user ID of a dedicated service-account user | `serviceAccountAuth.ts:77-84` |
+| `CLERK_DOMAIN` | **Yes, for the service-account mint** | No default. An unset, empty or whitespace-only value makes `getServiceAccountToken` and `getScopedUserToken` throw before any Clerk call, naming `CLERK_DOMAIN`. Must be the Frontend API origin of the Clerk instance that issued `CLERK_SECRET_KEY` | `mcp-server/src/serviceAccountAuth.ts:81-91`; `deploy/env-manifest.json` lists it as required |
 | `BEARER_SECRET_MASTER` | Functionally required | No boot-time throw. The master-bearer layer and `/admin/*` refuse: `Server misconfigured: BEARER_SECRET_MASTER not set` (500 `server_misconfigured` on `POST /admin/organizations`) | `mcp-server/src/auth.ts:1466,1745-1749`; `server-http.ts:1647-1649` |
 | `PUBLIC_BASE_URL` | Required when the `Host` header can be absent, and always for `/authorize` | `resolveIssuer()` throws `Server misconfigured: cannot determine public base URL (no Host header and PUBLIC_BASE_URL env var unset). Self-host deploys MUST set PUBLIC_BASE_URL.`; `/authorize` answers 503 | `server-http.ts:110-111,134-151`; `mcp-server/src/authorize.ts:90-91` |
 | `PORT` | No — defaults to `3000` | n/a | `server-http.ts:2317` |
@@ -115,7 +116,6 @@ Optional:
 
 | Variable | Default | Source |
 |---|---|---|
-| `CLERK_DOMAIN` | `https://sharp-sponge-67.clerk.accounts.dev` (a VantageOS-owned dev Clerk instance; a deployer using their own Clerk MUST override it) | `mcp-server/src/auth.ts:1133-1134`; `serviceAccountAuth.ts:82` |
 | `CLERK_JWT_AUDIENCE` | `"convex"` | `auth.ts:1145` |
 | `CLERK_JWT_TEMPLATE` | `"convex"` (Clerk JWT template the service account mints from) | `serviceAccountAuth.ts:83` |
 | `CLERK_PUBLISHABLE_KEY` | `""`; read by `/authorize/callback` for Clerk's handshake | `server-http.ts:812,922` |
@@ -188,7 +188,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "5.2.1",
+  "version": "6.0.0",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",
