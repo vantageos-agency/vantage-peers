@@ -24,6 +24,11 @@ import {
 	verifiedOrgSlugOf,
 } from "../doorScope.js";
 import {
+	VERIFIED_ACTOR_DOORS,
+	type VerifiedActorArg,
+	verifiedActorOf,
+} from "../verifiedActor.js";
+import {
 	listUiResources,
 	readUiResource,
 	type UiResourceCallerIdentity,
@@ -127,6 +132,22 @@ export function uiResourceDoorClaim(
 	return "denied" in resolved ? {} : resolved.args;
 }
 
+/**
+ * The agent ID a primitive's door call carries (S-28), resolved from the verified
+ * oauthContext only (verifiedActorOf), for every door in VERIFIED_ACTOR_DOORS: the same
+ * claim, under the same rules, as the wrapped client adds to a tool call. A Clerk session
+ * carries none (its own identity reaches Convex), nor does a bearer that resolved no
+ * agent: it is sent as it was.
+ */
+export function uiResourceActorClaim(
+	oauthCtx: OAuthContext,
+	door: string,
+): { verifiedActor?: VerifiedActorArg } {
+	if (!VERIFIED_ACTOR_DOORS.has(door)) return {};
+	const verifiedActor = verifiedActorOf(oauthCtx);
+	return verifiedActor === undefined ? {} : { verifiedActor };
+}
+
 export function registerUiResources(
 	server: McpServer,
 	convex: UiResourceConvexClient,
@@ -166,7 +187,11 @@ export function registerUiResources(
 			) => {
 				// The caller's verified claim rides every door that takes one; set
 				// last so a URI-derived argument can never replace it.
-				const scoped = { ...args, ...uiResourceDoorClaim(ctx, functionName) };
+				const scoped = {
+					...args,
+					...uiResourceDoorClaim(ctx, functionName),
+					...uiResourceActorClaim(ctx, functionName),
+				};
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, scoped as any);
 			};
