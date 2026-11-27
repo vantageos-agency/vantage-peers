@@ -33,6 +33,11 @@ import { describe, expect, it } from "vitest";
  *    `bun install --frozen-lockfile` with no monorepo parent to resolve against. This test copies
  *    those two files into an empty temporary directory and runs the same command there.
  *
+ *    The gate names three outcomes, never one: STALE (bun says the lockfile is frozen but would
+ *    change: regenerate it), NETWORK (the registry was unreachable or the run timed out: the
+ *    lockfile was NOT judged, re-run with network access), UNRECOGNISED (any other failure: read
+ *    the output). Every non-zero outcome stays RED; only the message differs.
+ *
  * Fail-closed: a missing api.d.ts, zero modules found, no bun, or a spawn error FAILS the test.
  * Paths are derived from this file's location, never from the cwd.
  */
@@ -81,6 +86,95 @@ describe("check-generated gate (module coverage, ported from .github/workflows/c
 	});
 });
 
+const STALE_RE = /lockfile had changes, but lockfile is frozen/;
+const NETWORK_LINE_RES = [
+	/^error: \w+ downloading (tarball|manifest)/m,
+	/^error: .*\b(ConnectionRefused|ConnectionClosed|ConnectionTimedOut|NetworkUnreachable|DNS\w*)\b/m,
+];
+
+/**
+ * Classify a finished `bun install --frozen-lockfile` run. Pure.
+ * STALE is checked before NETWORK: when both appear, the lockfile defect is real.
+ * @param {{status: number|null, signal: string|null, error?: {code?: string}, stdout?: string, stderr?: string}} r
+ * @returns {{kind: "pass"|"stale"|"network"|"unrecognised", detail?: string}}
+ */
+function classifyLockfileRun(r) {
+	if (r.status === 0) return { kind: "pass" };
+	const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+	if (STALE_RE.test(output)) return { kind: "stale" };
+	if (r.error?.code === "ETIMEDOUT" || (r.signal && r.status == null)) {
+		return { kind: "network", detail: "timed out" };
+	}
+	for (const re of NETWORK_LINE_RES) {
+		const m = output.match(re);
+		if (m) {
+			const line = output.slice(m.index).split("\n")[0];
+			return { kind: "network", detail: line };
+		}
+	}
+	return { kind: "unrecognised" };
+}
+
+function lockfileFailureMessage(r, verdict) {
+	const dump = `\n--- stdout ---\n${r.stdout}\n--- stderr ---\n${r.stderr}`;
+	const head = `bun install --frozen-lockfile exited ${r.status} (signal ${r.signal}) in an isolated copy of mcp-server/package.json + mcp-server/bun.lock.`;
+	if (verdict.kind === "stale") {
+		return `${head} Regenerate the lockfile FROM AN ISOLATED TREE (copy both files to an empty directory, run 'bun install' there, copy bun.lock back), never from inside the monorepo, where bun resolves the parent workspace.${dump}`;
+	}
+	if (verdict.kind === "network") {
+		return `${head} could not judge: the npm registry was unreachable (${verdict.detail}); the lockfile was NOT judged stale. Re-run with network access.${dump}`;
+	}
+	return `${head} could not judge: bun install failed for a reason this gate does not recognise; read the output below.${dump}`;
+}
+
+describe("mcp-server isolated lockfile gate classifier", () => {
+	const shape = (o) => ({
+		status: 1,
+		signal: null,
+		stdout: "",
+		stderr: "",
+		...o,
+	});
+	it("tells pass, stale, network (refused / timed out) and unrecognised apart", () => {
+		expect(classifyLockfileRun(shape({ status: 0 })).kind).toBe("pass");
+		expect(
+			classifyLockfileRun(
+				shape({
+					stderr:
+						"error: lockfile had changes, but lockfile is frozen\nerror: ConnectionRefused downloading tarball x@1.0.0",
+				}),
+			).kind,
+		).toBe("stale");
+		const refused = classifyLockfileRun(
+			shape({
+				stderr: "error: ConnectionRefused downloading tarball left-pad@1.3.0",
+			}),
+		);
+		expect(refused.kind).toBe("network");
+		expect(refused.detail).toContain("ConnectionRefused downloading tarball");
+		expect(
+			classifyLockfileRun(shape({ stderr: "error: DNSError resolving host" }))
+				.kind,
+		).toBe("network");
+		expect(
+			classifyLockfileRun(
+				shape({
+					status: null,
+					signal: "SIGTERM",
+					error: { code: "ETIMEDOUT" },
+				}),
+			),
+		).toEqual({ kind: "network", detail: "timed out" });
+		expect(
+			classifyLockfileRun(shape({ status: null, signal: "SIGTERM" })).kind,
+		).toBe("network");
+		expect(
+			classifyLockfileRun(shape({ stderr: "error: something else broke" }))
+				.kind,
+		).toBe("unrecognised");
+	});
+});
+
 describe("mcp-server isolated lockfile gate (ported from .github/workflows/mcp-server-lockfile-isolated.yml)", () => {
 	it("mcp-server/bun.lock installs frozen outside the monorepo, as Railway builds it", () => {
 		const pkg = join(repoRoot, "mcp-server", "package.json");
@@ -101,15 +195,16 @@ describe("mcp-server isolated lockfile gate (ported from .github/workflows/mcp-s
 				maxBuffer: 64 * 1024 * 1024,
 				timeout: 240_000,
 			});
-			if (result.error) {
+			if (result.error && result.error.code !== "ETIMEDOUT") {
 				throw new Error(
 					`bun install could not be spawned: ${result.error.message}`,
 				);
 			}
+			const verdict = classifyLockfileRun(result);
 			expect(
-				result.status,
-				`bun install --frozen-lockfile exited ${result.status} (signal ${result.signal}) in an isolated copy of mcp-server/package.json + mcp-server/bun.lock. Regenerate the lockfile FROM AN ISOLATED TREE (copy both files to an empty directory, run 'bun install' there, copy bun.lock back), never from inside the monorepo, where bun resolves the parent workspace.\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`,
-			).toBe(0);
+				verdict.kind,
+				verdict.kind === "pass" ? "" : lockfileFailureMessage(result, verdict),
+			).toBe("pass");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
