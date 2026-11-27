@@ -218,6 +218,7 @@ describe("defineTool — type-level: scope is mandatory (RED at compile time)", 
 			"t",
 			"d",
 			{},
+			{},
 			{ outputSchema: {} },
 			okHandler,
 		);
