@@ -30,6 +30,9 @@
  *   AUTHORIZE_STATE_SECRET, CLERK_DOMAIN, AUTHORIZE_SIGN_IN_URL,
  *   AUTHORIZE_CALLBACK_URL, CLERK_SECRET_KEY — person authorization
  *                           (/authorize); any missing => 503, never auto-approve
+ *   CLERK_DOMAIN          — Clerk frontend API URL of THIS deployment; REQUIRED, no
+ *                           default. Unset/blank => the Clerk-JWT layer answers 401
+ *                           (CLERK_DOMAIN_NOT_CONFIGURED) and fetches no JWKS
  *   NODE_ENV              — set to "production" on Railway
  */
 

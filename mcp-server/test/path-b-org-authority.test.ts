@@ -46,6 +46,8 @@ import {
 
 const CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
 const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
+// No built-in default domain: the layer under test needs the env set.
+process.env.CLERK_DOMAIN = CLERK_DOMAIN;
 const KID = "test-key-path-b";
 
 let publicJwk: Record<string, unknown>;

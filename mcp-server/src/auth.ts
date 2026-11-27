@@ -1232,9 +1232,25 @@ export function checkNamespaceWrite(
 // required if DCR clients were the sole entry point, which they are not.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CLERK_DOMAIN =
-	process.env.CLERK_DOMAIN ?? "https://sharp-sponge-67.clerk.accounts.dev";
-const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
+/**
+ * The Clerk frontend API domain of THIS deployment, from the environment or null.
+ * No default: a built-in domain would be the dev instance, and a deployment that
+ * forgot CLERK_DOMAIN would verify tokens against the wrong Clerk instance instead
+ * of refusing. Read per call (not at import) so the refusal tracks the live env.
+ */
+export function resolveClerkDomain(
+	env: Record<string, string | undefined> = process.env,
+): string | null {
+	const domain = (env.CLERK_DOMAIN ?? "").trim();
+	if (domain === "") return null;
+	try {
+		const u = new URL(domain);
+		if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+	} catch {
+		return null;
+	}
+	return domain;
+}
 
 // Expected `aud` claim for Clerk session JWTs accepted at this call site.
 // Default "convex" mirrors convex/auth.config.ts (`applicationID: "convex"`)
@@ -1246,13 +1262,21 @@ const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
 // correctly-configured Clerk "convex" JWT template mints.
 const CLERK_JWT_AUDIENCE = process.env.CLERK_JWT_AUDIENCE ?? "convex";
 
-// Lazy singleton — createRemoteJWKSet caches JWKS in-process (10-min TTL).
-let _clerkJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
-function clerkJwks(): ReturnType<typeof createRemoteJWKSet> {
-	_clerkJwks ??= createRemoteJWKSet(new URL(CLERK_JWKS_URL), {
-		cacheMaxAge: 10 * 60 * 1000,
-	});
-	return _clerkJwks;
+// Lazy singleton per domain — createRemoteJWKSet caches JWKS in-process (10-min TTL).
+let _clerkJwks: {
+	domain: string;
+	jwks: ReturnType<typeof createRemoteJWKSet>;
+} | null = null;
+function clerkJwks(domain: string): ReturnType<typeof createRemoteJWKSet> {
+	if (_clerkJwks?.domain !== domain) {
+		_clerkJwks = {
+			domain,
+			jwks: createRemoteJWKSet(new URL(`${domain}/.well-known/jwks.json`), {
+				cacheMaxAge: 10 * 60 * 1000,
+			}),
+		};
+	}
+	return _clerkJwks.jwks;
 }
 
 type ClerkPayload = { sub: string; org_id: string; exp: number };
@@ -1279,7 +1303,8 @@ type ClerkPayload = { sub: string; org_id: string; exp: number };
 export type ClerkJwtResult =
 	| ({ ok: true } & ClerkPayload)
 	| { ok: false; reason: "not-clerk" }
-	| { ok: false; reason: "no-org" };
+	| { ok: false; reason: "no-org" }
+	| { ok: false; reason: "not-configured" };
 
 /**
  * Attempts to verify `token` as a Clerk JWT.
@@ -1315,9 +1340,13 @@ export type ClerkJwtResult =
  * that DOES require the fallback).
  */
 async function tryVerifyClerkJwt(token: string): Promise<ClerkJwtResult> {
+	// `not-configured`: CLERK_DOMAIN is unset/blank/not a URL. Nothing is fetched
+	// and nothing is verified: there is no instance to verify against.
+	const clerkDomain = resolveClerkDomain();
+	if (clerkDomain === null) return { ok: false, reason: "not-configured" };
 	try {
-		const { payload } = await jwtVerify(token, clerkJwks(), {
-			issuer: CLERK_DOMAIN,
+		const { payload } = await jwtVerify(token, clerkJwks(clerkDomain), {
+			issuer: clerkDomain,
 			audience: CLERK_JWT_AUDIENCE,
 		});
 		// Verification succeeded — this IS the caller's own Clerk identity.
@@ -1701,6 +1730,25 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		// mapping row, or an inactive one, REFUSES outright rather than falling
 		// back to a populated default.
 		const clerkVerification = await tryVerifyClerkJwt(token);
+
+		// CLERK_DOMAIN unset: this layer cannot verify anything. Refuse with a
+		// named reason (never verify against a built-in instance). The layers
+		// above (master, OAuth access token) are unaffected.
+		if (
+			!clerkVerification.ok &&
+			clerkVerification.reason === "not-configured"
+		) {
+			c.header("WWW-Authenticate", wwwAuthHeader);
+			return c.json(
+				{
+					error:
+						"CLERK_DOMAIN_NOT_CONFIGURED: this deployment has no CLERK_DOMAIN " +
+						"set, so Clerk JWTs cannot be verified. The operator must set " +
+						"CLERK_DOMAIN to the Clerk frontend API URL of this environment.",
+				},
+				401,
+			);
+		}
 
 		// Property 4 (public-write-boundary delivery) — TYPED refusal for a
 		// verified-but-org-less Clerk identity. This is NOT the same case as

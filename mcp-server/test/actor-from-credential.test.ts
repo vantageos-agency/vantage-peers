@@ -60,6 +60,8 @@ import { registerTools } from "../src/tools.js";
 
 const CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
 const CLERK_JWKS_URL = `${CLERK_DOMAIN}/.well-known/jwks.json`;
+// No built-in default domain: the layer under test needs the env set.
+process.env.CLERK_DOMAIN = CLERK_DOMAIN;
 const KID = "test-key-actor-from-credential";
 const AGENT_HEADER = "x-vantage-agent-credential";
 

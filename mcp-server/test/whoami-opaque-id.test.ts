@@ -58,11 +58,15 @@ async function callWhoami(oauthCtx: OAuthContext) {
 const saved = {
 	w: process.env.WHOAMI_ID_SECRET,
 	b: process.env.BEARER_SECRET_MASTER,
+	c: process.env.CLERK_DOMAIN,
 };
 beforeEach(() => {
 	process.env.WHOAMI_ID_SECRET = SECRET;
+	process.env.CLERK_DOMAIN = "https://clerk.test.example";
 });
 afterEach(() => {
+	if (saved.c === undefined) delete process.env.CLERK_DOMAIN;
+	else process.env.CLERK_DOMAIN = saved.c;
 	if (saved.w === undefined) delete process.env.WHOAMI_ID_SECRET;
 	else process.env.WHOAMI_ID_SECRET = saved.w;
 	if (saved.b === undefined) delete process.env.BEARER_SECRET_MASTER;
@@ -136,7 +140,10 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 	});
 
 	it("same subject string from two issuers (Clerk vs OAuth) -> different ids", () => {
-		const env = { WHOAMI_ID_SECRET: SECRET };
+		const env = {
+			WHOAMI_ID_SECRET: SECRET,
+			CLERK_DOMAIN: "https://clerk.test.example",
+		};
 		expect(deriveOpaqueCallerId(ctx({}), env)).not.toBe(
 			deriveOpaqueCallerId(ctx({ clerkJwt: undefined }), env),
 		);
@@ -144,9 +151,15 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 
 	it("a different server secret -> a different id (HMAC, not a bare hash)", () => {
 		expect(
-			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "1".repeat(32) }),
+			deriveOpaqueCallerId(ctx({}), {
+				WHOAMI_ID_SECRET: "1".repeat(32),
+				CLERK_DOMAIN: "https://clerk.test.example",
+			}),
 		).not.toBe(
-			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: "2".repeat(32) }),
+			deriveOpaqueCallerId(ctx({}), {
+				WHOAMI_ID_SECRET: "2".repeat(32),
+				CLERK_DOMAIN: "https://clerk.test.example",
+			}),
 		);
 	});
 

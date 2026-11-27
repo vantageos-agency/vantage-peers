@@ -17,6 +17,11 @@
  * VP_EMIT_UI_MARKERS env gate is honored inside src/tools.ts and therefore
  * works transparently on stdio as well as HTTP.
  *
+ * Environment: CONVEX_URL, CLERK_SECRET_KEY, CLERK_SERVICE_ACCOUNT_USER_ID and
+ * CLERK_DOMAIN (the Clerk frontend API URL of your own instance) are REQUIRED; there
+ * is no default instance. The service-account side of that refusal lives in
+ * src/serviceAccountAuth.ts.
+ *
  * See README.md for the full tool reference.
  */
 

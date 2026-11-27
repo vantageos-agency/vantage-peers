@@ -42,8 +42,6 @@ export type WhoamiEnv = {
 	CLERK_DOMAIN?: string | undefined;
 };
 
-const DEFAULT_CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
-
 /** Minimum length of WHOAMI_ID_SECRET; shorter (or unset) => caller_id null. */
 export const MIN_WHOAMI_SECRET_LENGTH = 32;
 
@@ -56,10 +54,16 @@ export interface WhoamiIdentity {
 	acting_name: string | null;
 }
 
-function issuerOf(ctx: OAuthContext, env: WhoamiEnv): string {
+/**
+ * The issuer namespace of the caller's subject, or null when it is unknown. A Clerk
+ * caller's issuer is the configured (trimmed) CLERK_DOMAIN; with none configured the
+ * issuer is unknown and no id is derived: never an invented (dev) domain.
+ */
+function issuerOf(ctx: OAuthContext, env: WhoamiEnv): string | null {
 	if (isMasterScope(ctx)) return "vp-master";
 	if (ctx.clerkJwt !== undefined) {
-		return env.CLERK_DOMAIN ?? DEFAULT_CLERK_DOMAIN;
+		const domain = (env.CLERK_DOMAIN ?? "").trim();
+		return domain === "" ? null : domain;
 	}
 	return "vp-oauth";
 }
@@ -72,9 +76,11 @@ export function deriveOpaqueCallerId(
 	const secret = env.WHOAMI_ID_SECRET;
 	if (!secret || secret.length < MIN_WHOAMI_SECRET_LENGTH) return null;
 	if (!ctx.userId) return null;
+	const issuer = issuerOf(ctx, env);
+	if (issuer === null) return null;
 	const key = createHmac("sha256", secret).update("vp-whoami-key-v1").digest();
 	const digest = createHmac("sha256", key)
-		.update(`vp-whoami-v1\0${issuerOf(ctx, env)}\0${ctx.userId}`)
+		.update(`vp-whoami-v1\0${issuer}\0${ctx.userId}`)
 		.digest("hex");
 	return `vpu_${digest.slice(0, 32)}`;
 }
