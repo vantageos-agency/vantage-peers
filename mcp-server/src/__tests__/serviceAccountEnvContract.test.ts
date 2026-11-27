@@ -160,14 +160,15 @@ describe("service-account env-var contract — positive pole (config present)", 
 	test("loadConfig() returns a populated config when both env vars are set (fake values)", () => {
 		process.env.CLERK_SECRET_KEY = "sk_test_fake_00000000000000000000";
 		process.env.CLERK_SERVICE_ACCOUNT_USER_ID = "user_fake_service_account";
+		process.env.CLERK_DOMAIN = "https://clerk.example.test";
 
 		const config = _loadConfigForTest();
 
 		expect(config).not.toBeNull();
 		expect(config?.secretKey).toBe("sk_test_fake_00000000000000000000");
 		expect(config?.userId).toBe("user_fake_service_account");
-		// Defaults apply when the optional overrides are absent.
-		expect(config?.domain).toBe("https://sharp-sponge-67.clerk.accounts.dev");
+		// CLERK_DOMAIN is required and used verbatim; the template default applies.
+		expect(config?.domain).toBe("https://clerk.example.test");
 		expect(config?.template).toBe("convex");
 	});
 

@@ -26,8 +26,12 @@
 		"railway": {
 			"prod": {
 				"service": "vantage-peers-production",
-				"required": ["CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID"],
-				"optional": ["CLERK_DOMAIN", "CLERK_JWT_TEMPLATE"],
+				"required": [
+					"CLERK_SECRET_KEY",
+					"CLERK_SERVICE_ACCOUNT_USER_ID",
+					"CLERK_DOMAIN"
+				],
+				"optional": ["CLERK_JWT_TEMPLATE"],
 				"autoDeployFromMain": true
 			}
 		},
