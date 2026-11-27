@@ -10182,7 +10182,7 @@ export function registerTools(
 				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_bu",
-		"Fetch a single business unit by Convex document ID; an error when none matches or the caller may not see it. " +
+		"Fetch a single business unit by Convex document ID, returning null if not found. " +
 			"WHEN: use before updating or reporting on a BU to get the current canonical state. " +
 			"EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
@@ -10217,9 +10217,11 @@ export function registerTools(
 					delete (filteredBu as Record<string, unknown>).createdBy;
 				}
 
-				if (filteredBu === null) {
-					return mcpError(`Business unit not found: ${buId}`);
-				}
+				// The outputSchema is { bu: <row> | null }: the wrapper exists so that a
+				// unit that is absent (or that the caller may not see, which reads the
+				// same) stays a SUCCESS whose text is "null". Turning it into an error
+				// would change the output shape, a Major change; structuredContent must
+				// be an object, so { bu: null } carries the absence.
 				return {
 					content: [
 						{
@@ -10227,7 +10229,7 @@ export function registerTools(
 							text: JSON.stringify(filteredBu, null, 2),
 						},
 					],
-					structuredContent: filteredBu as Record<string, unknown>,
+					structuredContent: { bu: filteredBu },
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

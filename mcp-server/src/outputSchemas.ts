@@ -3067,8 +3067,18 @@ export const updateBuServedOutputSchema = z.looseObject({
 	updated: z.boolean().describe("True: the update was recorded."),
 });
 
-/** get_bu: one business unit row, as stored. */
-export const getBuServedOutputSchema = buRow;
+/**
+ * get_bu: one business unit row, as stored, in a `bu` wrapper. The wrapper exists
+ * so that a unit that is absent (or not visible to the caller, which reads the
+ * same) stays a success: its text is "null" and structuredContent is { bu: null }.
+ */
+export const getBuServedOutputSchema = z.looseObject({
+	bu: buRow
+		.nullable()
+		.describe(
+			"The business unit; null when none matches or the caller may not see it.",
+		),
+});
 
 /** list_bus: business units, newest first; full rows, or the lite projection. */
 export const listBusServedOutputSchema = pageOf(
