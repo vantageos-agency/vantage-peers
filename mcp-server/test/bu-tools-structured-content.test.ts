@@ -199,7 +199,23 @@ describe("update_bu", () => {
 });
 
 describe("get_bu", () => {
-	it("declares its schema and answers the row as structuredContent, equal to its text", async () => {
+	// The outputSchema is { bu: <row> | null }: the wrapper exists so that a unit
+	// that is absent, or not visible to the caller, stays a SUCCESS whose text is
+	// "null" (turning it into an error would change the output shape: Major).
+	const FOREIGN_CALLER = {
+		clientId: "client-alpha",
+		userId: "user-alpha",
+		scopes: ["mcp:full"],
+		scopeProfile: "tenant",
+		fromAllowList: ["alpha"],
+		namespaceReadPrefixes: ["team/org-alpha"],
+		namespaceWritePrefixes: ["team/org-alpha"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: false,
+		clerkOrgSlug: "org-alpha",
+	} as OAuthContext;
+
+	it("declares its schema and answers { bu: row }, the text staying the row", async () => {
 		const stored = fullRow({
 			domain: "vantagepeers.com",
 			orgId: "org_1",
@@ -208,15 +224,33 @@ describe("get_bu", () => {
 		});
 		const h = harness({ "businessUnits:get": () => stored });
 		const res = await success(h, "get_bu", { buId: BU_ID });
-		expect(res.structuredContent).toEqual(stored);
+		expect(res.structuredContent).toEqual({ bu: stored });
 		expect(res.content[0].text).toBe(JSON.stringify(stored, null, 2));
 	});
 
-	it("a business unit that is not there stays an error with no structuredContent", async () => {
+	it("a business unit that is not there is a success: text null, { bu: null }", async () => {
 		const h = harness({ "businessUnits:get": () => null });
-		const res = await h.tool("get_bu").handler({ buId: BU_ID });
-		expect(res.isError).toBe(true);
-		expect(res.structuredContent).toBeUndefined();
+		const res = await success(h, "get_bu", { buId: BU_ID });
+		expect(res.content[0].text).toBe("null");
+		expect(res.structuredContent).toEqual({ bu: null });
+	});
+
+	it("a unit of another orchestrator reads exactly like an absent one (isolation)", async () => {
+		const foreign = fullRow({ orchestratorId: "beta", name: "BetaSecret" });
+		const hForeign = harness(
+			{ "businessUnits:get": () => foreign },
+			FOREIGN_CALLER,
+		);
+		const hAbsent = harness(
+			{ "businessUnits:get": () => null },
+			FOREIGN_CALLER,
+		);
+		const a = await success(hForeign, "get_bu", { buId: BU_ID });
+		const b = await success(hAbsent, "get_bu", { buId: BU_ID });
+		expect(a.content[0].text).toBe("null");
+		expect(a.structuredContent).toEqual({ bu: null });
+		expect(a).toEqual(b);
+		expect(JSON.stringify(a)).not.toContain("BetaSecret");
 	});
 });
 

@@ -33,10 +33,6 @@ function harness(oauthCtx: OAuthContext) {
 	} as Parameters<typeof registerTools>[0];
 	const record = (kind: string) => async (fn: unknown, args: unknown) => {
 		calls.push({ kind, fn: String(fn), args: args as Record<string, unknown> });
-		// get_bu answers a row it can serve: an absent row is an error, not a success.
-		if (String(fn) === "businessUnits:get") {
-			return { _id: "bu1", name: "n", orchestratorId: "alpha" };
-		}
 		return kind === "query" ? { items: [], nextCursor: null } : "bu-id";
 	};
 	const convex = {
