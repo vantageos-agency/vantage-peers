@@ -54,11 +54,11 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 314,
-			"measured_tree_sha": "915e1f115c38961394b7403ea466e1d8a57aab48",
+			"count": 313,
+			"measured_tree_sha": "25e6e54291e76383931fc7a895412cba3b7ed4d1",
 			"cli_commit": "2850defd1402788c70ba7bd5f4be77673597804c",
-			"command": "npx -y @vantageos/backend-doctor@0.9.0 <vantage-peers clean full checkout @915e1f11 (task k175a6cfcq9qz2xcct7jskejm18jxc45), deps installed> --json-evidence <dir>/",
-			"output_line": "R-53: 314 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=16 non-conforming=314 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 236, CR-3 13, R-4 33, R-5 62, R-53 314, R-54 108, R-55 22, R-60 11, R-61 13",
+			"command": "npx -y @vantageos/backend-doctor@0.9.0 <vantage-peers clean full checkout @25e6e542 on Boat (task k17425xt3tjf8qkynefppcps1d8jdk5s), deps installed> --json-evidence <dir>/",
+			"output_line": "R-53: 313 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=16 non-conforming=313 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 236, CR-3 13, R-4 33, R-5 62, R-53 313, R-54 108, R-55 22, R-60 11, R-61 13",
 			"modules": {}
 		},
 		"R-5": {
