@@ -104,7 +104,11 @@ export const run = internalMutation({
 		const unchanged: string[] = [];
 		const refused: Array<{
 			repo: string;
-			reason: "target-org-not-found" | "agent-not-in-org" | "no-label-for-role" | "duplicate-repo";
+			reason:
+				| "target-org-not-found"
+				| "agent-not-in-org"
+				| "no-label-for-role"
+				| "duplicate-repo";
 			role?: Field;
 			agentId?: Id<"agents">;
 		}> = [];
