@@ -12,10 +12,20 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { CLIENT_CTX, expectRefused, expectServed, harness } from "./lib/s54Harness.js";
+import {
+	CLIENT_CTX,
+	expectRefused,
+	expectServed,
+	harness,
+} from "./lib/s54Harness.js";
 
 const kw = [
-	{ memoryId: "m1", namespace: "project/ops", type: "episode", content: "convex deploy schema" },
+	{
+		memoryId: "m1",
+		namespace: "project/ops",
+		type: "episode",
+		content: "convex deploy schema",
+	},
 ];
 
 describe("text_search", () => {
@@ -53,7 +63,13 @@ describe("text_search", () => {
 
 describe("hybrid_search", () => {
 	const hy = [
-		{ memoryId: "m2", rrfScore: 0.031, namespace: "project/ops", type: "reference", content: "rrf" },
+		{
+			memoryId: "m2",
+			rrfScore: 0.031,
+			namespace: "project/ops",
+			type: "reference",
+			content: "rrf",
+		},
 	];
 
 	it("serves the fused matches and forwards the two weights to search:hybridSearch", async () => {
@@ -112,7 +128,13 @@ describe("search_episodes_by_keyword", () => {
 
 describe("search_episodes_by_semantic", () => {
 	const sem = [
-		{ memoryId: "m3", score: 0.91, namespace: "project/ops", type: "episode", content: "hook false positive" },
+		{
+			memoryId: "m3",
+			score: 0.91,
+			namespace: "project/ops",
+			type: "episode",
+			content: "hook false positive",
+		},
 	];
 
 	it("restricts the semantic search to type 'episode' through search:recall", async () => {
@@ -164,7 +186,9 @@ describe("get_episode", () => {
 
 	it("serves the episode row as text and structuredContent", async () => {
 		const h = harness({ "memories:getMemory": () => row("episode") });
-		const res = await h.tools.get("get_episode")!.handler({ episodeId: EPISODE_ID });
+		const res = await h.tools
+			.get("get_episode")!
+			.handler({ episodeId: EPISODE_ID });
 		const out = expectServed(h.tools, "get_episode", res);
 		expect(out).toEqual(row("episode"));
 		expect(JSON.parse(res.content[0].text)).toEqual(row("episode"));
@@ -173,13 +197,17 @@ describe("get_episode", () => {
 
 	it("answers 'Episode not found' for a memory that is not an episode", async () => {
 		const h = harness({ "memories:getMemory": () => row("project") });
-		const res = await h.tools.get("get_episode")!.handler({ episodeId: EPISODE_ID });
+		const res = await h.tools
+			.get("get_episode")!
+			.handler({ episodeId: EPISODE_ID });
 		expectRefused(res, /Episode not found/);
 	});
 
 	it("answers 'Episode not found' when the door returns no row", async () => {
 		const h = harness({ "memories:getMemory": () => null });
-		const res = await h.tools.get("get_episode")!.handler({ episodeId: EPISODE_ID });
+		const res = await h.tools
+			.get("get_episode")!
+			.handler({ episodeId: EPISODE_ID });
 		expectRefused(res, /Episode not found/);
 	});
 });
