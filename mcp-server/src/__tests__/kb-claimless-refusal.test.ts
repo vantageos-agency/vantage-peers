@@ -43,7 +43,11 @@ function makeStubConvex() {
 			return { storageId: "sid", orgId: "org-A" };
 		return "https://upload.example/url";
 	});
-	return { stub: { action, mutation } as unknown as ConvexHttpClient, action, mutation };
+	return {
+		stub: { action, mutation } as unknown as ConvexHttpClient,
+		action,
+		mutation,
+	};
 }
 
 const base = {
@@ -143,8 +147,10 @@ describe.each(SITES)("$site $door via $tool", (s) => {
 	it("a verified caller: the door receives the verified org claim", async () => {
 		const h = setup(verifiedCtx);
 		await h.tool(s.tool)(s.args);
-		const calls = (s.kind === "action" ? h.action : h.mutation).mock
-			.calls as [string, Record<string, unknown>][];
+		const calls = (s.kind === "action" ? h.action : h.mutation).mock.calls as [
+			string,
+			Record<string, unknown>,
+		][];
 		expect(calls).toHaveLength(1);
 		expect(calls[0][0]).toBe(s.door);
 		expect(calls[0][1]).toMatchObject({ verifiedOrg: { orgSlug: "org-A" } });

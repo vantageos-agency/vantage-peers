@@ -52,7 +52,11 @@ async function callGetMemory(ctx: OAuthContext) {
 	}));
 	registerTools(
 		server,
-		{ query, mutation: vi.fn(), action: vi.fn() } as unknown as ConvexHttpClient,
+		{
+			query,
+			mutation: vi.fn(),
+			action: vi.fn(),
+		} as unknown as ConvexHttpClient,
 		ctx,
 	);
 	await handlers.get("get_memory")?.({ memoryId: MEMORY_ID });
