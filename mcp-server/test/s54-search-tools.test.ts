@@ -148,6 +148,18 @@ describe("get_episode", () => {
 		type,
 		content: "context goal action outcome insight",
 		createdBy: "beta",
+		relations: [],
+		isLatest: true,
+		createdAt: 1_700_000_000_000,
+		updatedAt: 1_700_000_000_000,
+		episode: {
+			context: "ctx",
+			goal: "goal",
+			action: "act",
+			outcome: "out",
+			insight: "lesson",
+			severity: "minor",
+		},
 	});
 
 	it("serves the episode row as text and structuredContent", async () => {
