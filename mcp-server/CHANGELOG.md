@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [5.2.1] — 2026-11-27
+
+A patch release: `list_diaries` accepts a member's own verified identities. No tool is added or removed and no tool input or output shape changes. Each entry names the product it concerns.
+
+### Fixed
+
+- Cloud and Self-host: a member agent can list its own diary with `list_diaries`. The tool compared a non-master caller's filters with its Clerk user id, while an agent's entries are recorded under its agent name, so a member agent was always refused. A non-master caller's own identities are now read from its verified context only: its agent name (as `whoami` reports `agent_name`), `user:<subject>`, and the bare subject kept for compatibility. With no filter, the tool lists the caller's own entries instead of refusing; a filter naming another member is still refused. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [5.2.0] — 2026-11-27
 
 A minor release: `check_repo_routing` gains one output bucket and `list_repo_mappings` serves out-of-scope rows. No tool is added or removed and no tool input changes. Each entry names the product it concerns.
