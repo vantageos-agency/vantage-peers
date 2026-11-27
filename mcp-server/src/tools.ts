@@ -49,6 +49,7 @@ import {
 } from "./doorScope.js";
 import {
 	type IdentityFacts,
+	identityDenial,
 	unresolvedOrgDenial as identityUnresolvedOrgDenial,
 } from "./identityDenial.js";
 import {
@@ -2828,15 +2829,14 @@ export function registerTools(
 	// own identity and is judged by the door as itself, so it is not refused here
 	// when `sessionIsOwnIdentity` is set. Typed, BEFORE the call, like
 	// unresolvedOrgDenial.
-	const unverifiedActorDenial = (
-		door: string,
-		sessionIsOwnIdentity = false,
-	) => {
-		if (verifiedActor !== undefined) return null;
-		if (sessionIsOwnIdentity && oauthCtx?.clerkJwt !== undefined) return null;
-		return mcpError(
-			`RBAC_DENIED: ${door} needs the calling agent's verified ID and this bearer resolves none — ${JSON.stringify({ reason: "verified-actor-required", door })}`,
+	const unverifiedActorDenial = (door: string, sessionIsOwnIdentity = false) => {
+		const denial = identityDenial(
+			identityFacts(),
+			door,
+			"verified-actor-required",
+			sessionIsOwnIdentity,
 		);
+		return denial === null ? null : mcpError(denial);
 	};
 	// Delegation guard — distinct question from the acting-name gates (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
