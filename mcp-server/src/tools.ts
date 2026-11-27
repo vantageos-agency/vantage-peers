@@ -2818,13 +2818,11 @@ export function registerTools(
 	// (verifiedActorOf), never from a tool argument, forwarded by the tool on every
 	// door that takes `verifiedActor`. The wrapped client adds the same claim; the
 	// tool states it so the call site shows it. One proof per call: a person acting
-	// in its own name (`scoped.verifiedPerson`) carries no actor beside it.
+	// in its own name carries no actor beside it (`proofCarried`).
 	const actorClaim = (
-		scoped?: DoorScopeArgs,
+		proofCarried = false,
 	): { verifiedActor?: typeof verifiedActor } =>
-		verifiedActor !== undefined && scoped?.verifiedPerson === undefined
-			? { verifiedActor }
-			: {};
+		verifiedActor !== undefined && !proofCarried ? { verifiedActor } : {};
 	// A door that judges its caller by the agent's verified ID alone refuses a call
 	// with none (RBAC_DENIED verified-actor-required). A Clerk-JWT session is its
 	// own identity and is judged by the door as itself, so it is not refused here
@@ -8985,7 +8983,7 @@ export function registerTools(
 					cronExpression,
 					createdBy,
 					...scoped,
-					...actorClaim(scoped),
+					...actorClaim(scoped.verifiedPerson !== undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
