@@ -29,7 +29,8 @@ function consoleCalls(src: string): string[] {
 			else if (src[i] === ")") depth--;
 			i++;
 		}
-		if (depth !== 0) throw new Error(`unbalanced console call at offset ${m.index}`);
+		if (depth !== 0)
+			throw new Error(`unbalanced console call at offset ${m.index}`);
 		calls.push(src.slice(m.index, i));
 		m = re.exec(src);
 	}
@@ -40,16 +41,22 @@ describe("server-http startup logs", () => {
 	const calls = consoleCalls(source);
 
 	it("positive control: the scanner finds the startup log calls", () => {
-		expect(calls.some((c) => c.includes("HTTP transport listening"))).toBe(true);
+		expect(calls.some((c) => c.includes("HTTP transport listening"))).toBe(
+			true,
+		);
 	});
 
 	it("no console call interpolates server.hostname or HOSTNAME", () => {
-		const offenders = calls.filter((c) => /server\.hostname|\bHOSTNAME\b/.test(c));
+		const offenders = calls.filter((c) =>
+			/server\.hostname|\bHOSTNAME\b/.test(c),
+		);
 		expect(offenders).toEqual([]);
 	});
 
 	it("still tells the operator the port and the paths", () => {
-		const start = calls.filter((c) => c.includes("[vantage-peers-mcp]")).join("\n");
+		const start = calls
+			.filter((c) => c.includes("[vantage-peers-mcp]"))
+			.join("\n");
 		expect(start).toMatch(/server\.port/);
 		expect(start).toMatch(/\/health/);
 		expect(start).toMatch(/\/mcp/);
