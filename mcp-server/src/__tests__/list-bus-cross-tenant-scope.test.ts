@@ -271,7 +271,9 @@ describe("get_bu — same remap, single-row get counterpart", () => {
 		// A foreign unit is answered exactly as an absent one: the not-found
 		// error, never the row, and no structuredContent.
 		expect(isErrorResult(result)).toBe(true);
-		expect((result as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+		expect(
+			(result as { structuredContent?: unknown }).structuredContent,
+		).toBeUndefined();
 		expect(
 			(result as { content: Array<{ text: string }> }).content[0].text,
 		).toContain("Business unit not found");
