@@ -10491,7 +10491,7 @@ export function registerTools(
 				.enum(["lite", "full"])
 				.optional()
 				.meta({ default: "full" })
-				.describe("How much of each row comes back: every stored field, or the short form, just the mapping's ID, creation time, repo, orchestrator and project."),
+				.describe("How much of each row comes back: every stored field, or the short form, just the mapping's ID, creation time, repo and project, plus the orchestrator when the repo has one (an out-of-scope repo has none)."),
 			cursor: z
 				.string()
 				.optional()

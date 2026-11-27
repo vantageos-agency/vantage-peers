@@ -1201,6 +1201,24 @@ export const addRepoMappingServedOutputSchema = z.looseObject({
 		.describe(
 			"Who reviews when the reviewer is stopped; absent when none was given (the fleet default applies).",
 		),
+	orchestratorAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The agent ID (list_peers `agentId`) of the orchestrator; absent when none was given.",
+		),
+	reviewerAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The agent ID (list_peers `agentId`) of the reviewer; absent when none was given.",
+		),
+	fallbackReviewerAgentId: z
+		.string()
+		.optional()
+		.describe(
+			"The agent ID (list_peers `agentId`) of the fallbackReviewer; absent when none was given.",
+		),
 });
 
 /** remove_repo_mapping: the repo and whether a mapping was removed. */
@@ -1746,7 +1764,18 @@ export const listRepoMappingsServedOutputSchema = pageOf(
 			.describe("The GitHub repository, as owner/name, e.g. 'acme/app'."),
 		orchestrator: z
 			.string()
-			.describe("The orchestrator the repository's events are routed to."),
+			.optional()
+			.describe(
+				"The orchestrator the repository's events are routed to; absent for an out-of-scope repo.",
+			),
+		outOfScope: z
+			.looseObject({
+				reason: z.string().describe("Why nobody owns the repository."),
+			})
+			.optional()
+			.describe(
+				"Present on full rows when no station owns the repo, with the reason; lite rows never carry it.",
+			),
 		project: z.string().describe("The project the repository belongs to."),
 		active: z
 			.boolean()
@@ -1778,9 +1807,27 @@ export const listRepoMappingsServedOutputSchema = pageOf(
 			.describe(
 				"Who reviews when the reviewer cannot; absent when the fleet default applies, and on lite rows.",
 			),
+		orchestratorAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The agent ID (list_peers `agentId`) of the orchestrator; absent when none was stored, and on lite rows.",
+			),
+		reviewerAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The agent ID (list_peers `agentId`) of the reviewer; absent when none was stored, and on lite rows.",
+			),
+		fallbackReviewerAgentId: z
+			.string()
+			.optional()
+			.describe(
+				"The agent ID (list_peers `agentId`) of the fallbackReviewer; absent when none was stored, and on lite rows.",
+			),
 		orgId: orgSlug("mapping"),
 	}),
-	"The mappings, newest first; lite rows carry _id, _creationTime, repo, orchestrator and project.",
+	"The mappings, newest first; lite rows carry _id, _creationTime, repo, project and, when the repo is routed, orchestrator; they never carry outOfScope.",
 );
 
 /** list_fix_patterns: fixPatterns:listAll / listByProject `returns:`. */
