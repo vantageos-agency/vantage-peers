@@ -4984,17 +4984,21 @@ export function registerTools(
 				// agent, by ID. `recipient` is accepted for compatibility and ignored.
 				const orgUnresolved = unresolvedOrgDenial("list_blocked_on_me");
 				if (orgUnresolved) return orgUnresolved;
-				// DECLARED DIVERGENCE (S-28): the verified agent ID is added by the wrapped
-				// client (VERIFIED_ACTOR_DOORS); a bearer that resolved no agent ID (an
-				// org-level token) is sent no claim on purpose, and the door refuses it
-				// (RBAC_DENIED claimless-service-account): the caller gate of this
-				// identity-bound read lives in the door (scope-guard-coverage.test.ts).
-				// A verifiedOrg would not serve it: the door then needs a named recipient.
+				// S-28: the verified agent ID is stated here, as the wrapped client adds it
+				// (VERIFIED_ACTOR_DOORS), so the call site shows the claim. DECLARED
+				// DIVERGENCE: a bearer that resolved no agent ID (an org-level token) is sent
+				// no claim on purpose, and the door refuses it (RBAC_DENIED
+				// claimless-service-account): the caller gate of this identity-bound read
+				// lives in the door (scope-guard-coverage.test.ts). A verifiedOrg would not
+				// serve it: the door then needs a named recipient. The claim is written as a
+				// conditional key, not a spread helper, because that census reads a spread
+				// call as a possible organisation claim.
 				const result = await convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					"tasks:listBlockedOnMe" as any,
 					{
 						...(tenantId !== undefined ? { tenantId } : {}),
+						...(verifiedActor !== undefined ? { verifiedActor } : {}),
 					},
 				);
 				if (!isPlainObject(result) || !Array.isArray(result.entries)) {
