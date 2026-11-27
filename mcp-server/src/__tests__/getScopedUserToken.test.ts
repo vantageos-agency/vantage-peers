@@ -54,7 +54,9 @@ describe("getScopedUserToken", () => {
 
 	test("mints a NATIVE (no-template) session token for an arbitrary scoped user, distinct from the fixed service account", async () => {
 		const previous = process.env.CLERK_SECRET_KEY;
+		const previousDomain = process.env.CLERK_DOMAIN;
 		process.env.CLERK_SECRET_KEY = "test-secret-key";
+		process.env.CLERK_DOMAIN = "https://clerk.example.test";
 		try {
 			const createSignInTicket = vi.fn().mockResolvedValue("ticket-scoped");
 			const exchangeTicketForSession = vi
@@ -82,7 +84,7 @@ describe("getScopedUserToken", () => {
 			);
 			expect(exchangeTicketForSession).toHaveBeenCalledWith(
 				"ticket-scoped",
-				expect.any(String),
+				"https://clerk.example.test",
 			);
 			// NATIVE path: getNativeSessionToken takes no template argument at all
 			// (distinct from getServiceAccountToken's getSessionToken(id, "convex")).
@@ -101,6 +103,11 @@ describe("getScopedUserToken", () => {
 				process.env.CLERK_SECRET_KEY = previous;
 			} else {
 				delete process.env.CLERK_SECRET_KEY;
+			}
+			if (previousDomain !== undefined) {
+				process.env.CLERK_DOMAIN = previousDomain;
+			} else {
+				delete process.env.CLERK_DOMAIN;
 			}
 		}
 	});
