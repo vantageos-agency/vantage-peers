@@ -72,6 +72,10 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// tasks
 	"tasks:create": { verifiedPerson: true, verifiedOrg: "unless-person" },
 	"tasks:list": { verifiedOrg: "always" },
+	"tasks:getById": { verifiedOrg: "always" },
+	"tasks:getBulkCompleteRun": { verifiedOrg: "always" },
+	"missions:get": { verifiedOrg: "always" },
+	"recurringTasks:getById": { verifiedOrg: "always" },
 	"tasks:searchTasksByKeyword": { verifiedOrg: "always" },
 	"tasks:bulkComplete": { verifiedOrg: "always" },
 	"tasks:update": { verifiedPerson: true, verifiedOrg: "always" },

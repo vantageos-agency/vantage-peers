@@ -6199,6 +6199,7 @@ export function registerTools(
 			try {
 				const row = await convex.query("tasks:getBulkCompleteRun" as any, {
 					bulkRunId,
+					...doorScopeArgs("tasks:getBulkCompleteRun", undefined),
 				});
 				if (row === null || row === undefined) {
 					return mcpError(`Bulk run not found: ${bulkRunId}`);
@@ -7177,6 +7178,7 @@ export function registerTools(
 					// The door returns null; report the list it left on the row.
 					const row = (await convex.query("tasks:getById" as any, {
 						taskId,
+						...doorScopeArgs("tasks:getById", undefined),
 					})) as { dependsOn?: string[] } | null;
 					resultingDependsOn = row?.dependsOn ?? [];
 				}
@@ -7253,7 +7255,10 @@ export function registerTools(
 				};
 				await convex.mutation("tasks:update" as any, updateArgs);
 				// The door returns null; report the list it left on the row.
-				const row = (await convex.query("tasks:getById" as any, { taskId })) as {
+				const row = (await convex.query("tasks:getById" as any, {
+					taskId,
+					...doorScopeArgs("tasks:getById", undefined),
+				})) as {
 					dependsOn?: string[];
 				} | null;
 				const resulting = row?.dependsOn ?? [];
@@ -7867,6 +7872,7 @@ export function registerTools(
 				// matching (k174y9ra7pp8zed3bcczk6xaed8cpynp).
 				const mission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
+					...doorScopeArgs("missions:get", undefined),
 				});
 				const filteredMission = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -9335,6 +9341,7 @@ export function registerTools(
 				// than let the mutation touch another scope's template.
 				const existing = await convex.query("recurringTasks:getById" as any, {
 					recurringTaskId,
+					...doorScopeArgs("recurringTasks:getById", undefined),
 				});
 				if (existing == null) {
 					return mcpError(
@@ -12202,6 +12209,7 @@ export function registerTools(
 				// silently producing tasks under another tenant's mission.
 				const targetMission = await convex.query("missions:get" as any, {
 					missionId: missionId as any,
+					...doorScopeArgs("missions:get", undefined),
 				});
 				const filteredMission = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -12989,7 +12997,10 @@ export function registerTools(
 		},
 		async ({ taskId }) => {
 			try {
-				const row = await convex.query("tasks:getById" as any, { taskId });
+				const row = await convex.query("tasks:getById" as any, {
+					taskId,
+					...doorScopeArgs("tasks:getById", undefined),
+				});
 				// TENANT GATE, by-id surface: an agent of org A never reaches a row
 				// stamped org B (nor an unstamped one). Same predicate as the
 				// collection reads below (rowVisibleToActorTenant) — one boundary,
@@ -13359,6 +13370,7 @@ export function registerTools(
 			try {
 				const row = await convex.query("recurringTasks:getById" as any, {
 					recurringTaskId,
+					...doorScopeArgs("recurringTasks:getById", undefined),
 				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {

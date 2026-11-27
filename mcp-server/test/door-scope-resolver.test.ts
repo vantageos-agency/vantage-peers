@@ -272,6 +272,16 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["get_message", "messages:getById", org, false],
 	["create_task", "tasks:create", personOnly, true],
 	["list_tasks", "tasks:list", org, false],
+	// S-35 expand (task k17d4vqbcwfz297b3p9g639av18k1pj1): the by-id reads send the
+	// bearer's verified org; one row per call site in tools.ts.
+	["get_bulk_complete_run", "tasks:getBulkCompleteRun", org, false],
+	["block_task", "tasks:getById", org, false],
+	["add_task_dependency", "tasks:getById", org, false],
+	["get_task", "tasks:getById", org, false],
+	["get_mission", "missions:get", org, false],
+	["create_task_in_mission", "missions:get", org, false],
+	["update_recurring_task", "recurringTasks:getById", org, false],
+	["get_recurring_task", "recurringTasks:getById", org, false],
 	["search_tasks_by_keyword", "tasks:searchTasksByKeyword", org, false],
 	["bulk_complete_tasks", "tasks:bulkComplete", org, false],
 	["update_task", "tasks:update", personAndOrg, true],

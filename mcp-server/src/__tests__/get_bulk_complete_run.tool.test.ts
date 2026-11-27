@@ -130,7 +130,7 @@ describe("get_bulk_complete_run", () => {
 		expect(body.failureReason).toMatch(/RBAC_DENIED/);
 		expect((convex.query as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
 			"tasks:getBulkCompleteRun",
-			{ bulkRunId: "bulk-1-aaaa" },
+			{ bulkRunId: "bulk-1-aaaa", verifiedOrg: { orgSlug: "org-a" } },
 		]);
 	});
 
