@@ -173,9 +173,18 @@ describe("whoami opaque id: stable, distinct, never the raw id", () => {
 
 	it("secret present -> stable id; too short or empty secret -> null (min 32)", () => {
 		const ok = "s".repeat(MIN_WHOAMI_SECRET_LENGTH);
-		const a = deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: ok });
+		const dom = "https://clerk.test.example";
+		const a = deriveOpaqueCallerId(ctx({}), {
+			WHOAMI_ID_SECRET: ok,
+			CLERK_DOMAIN: dom,
+		});
 		expect(a).toMatch(/^vpu_[0-9a-f]{32}$/);
-		expect(deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: ok })).toBe(a);
+		expect(
+			deriveOpaqueCallerId(ctx({}), {
+				WHOAMI_ID_SECRET: ok,
+				CLERK_DOMAIN: dom,
+			}),
+		).toBe(a);
 		const short = "s".repeat(MIN_WHOAMI_SECRET_LENGTH - 1);
 		expect(
 			deriveOpaqueCallerId(ctx({}), { WHOAMI_ID_SECRET: short }),
