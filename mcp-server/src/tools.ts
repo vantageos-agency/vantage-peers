@@ -105,6 +105,11 @@ import {
 	instantiateTemplateIntoMissionServedOutputSchema,
 	linkIssueToPatternServedOutputSchema,
 	createMandateServedOutputSchema,
+	createBuServedOutputSchema,
+	updateBuServedOutputSchema,
+	getBuServedOutputSchema,
+	listBusServedOutputSchema,
+	deleteBuServedOutputSchema,
 	acceptMandateServedOutputSchema,
 	updateMandateServedOutputSchema,
 	settleMandateServedOutputSchema,
@@ -9994,6 +9999,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create BU",
+			outputSchema: createBuServedOutputSchema,
 		},
 		async ({
 			name,
@@ -10038,17 +10044,12 @@ export function registerTools(
 					managementFee: managementFee ?? 10,
 				});
 
+				const structured = { buId, name, orchestratorId, status };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ buId, name, orchestratorId, status },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10102,6 +10103,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update BU",
+			outputSchema: updateBuServedOutputSchema,
 		},
 		async ({
 			buId,
@@ -10156,13 +10158,12 @@ export function registerTools(
 					managementFee,
 				});
 
+				const structured = { buId, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ buId, updated: true }, null, 2),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10181,7 +10182,7 @@ export function registerTools(
 				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_bu",
-		"Fetch a single business unit by Convex document ID, returning null if not found. " +
+		"Fetch a single business unit by Convex document ID; an error when none matches or the caller may not see it. " +
 			"WHEN: use before updating or reporting on a BU to get the current canonical state. " +
 			"EXAMPLE: get_bu buId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
@@ -10192,6 +10193,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get BU",
+			outputSchema: getBuServedOutputSchema,
 		},
 		async ({ buId }) => {
 			try {
@@ -10215,6 +10217,9 @@ export function registerTools(
 					delete (filteredBu as Record<string, unknown>).createdBy;
 				}
 
+				if (filteredBu === null) {
+					return mcpError(`Business unit not found: ${buId}`);
+				}
 				return {
 					content: [
 						{
@@ -10222,6 +10227,7 @@ export function registerTools(
 							text: JSON.stringify(filteredBu, null, 2),
 						},
 					],
+					structuredContent: filteredBu as Record<string, unknown>,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10275,6 +10281,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List BUs",
+			outputSchema: listBusServedOutputSchema,
 		},
 		async ({ orchestratorId, status, limit, fields, cursor }) => {
 			try {
@@ -10353,17 +10360,10 @@ export function registerTools(
 
 				const busWithCursor = { items: filteredBus, nextCursor };
 
+				const capped = capPage(busWithCursor, "list_bus");
 				return {
-					content: [
-						{
-							type: "text",
-							text: capListResponseBytes(
-								filteredBus,
-								JSON.stringify(busWithCursor, null, 2),
-								"list_bus",
-							),
-						},
-					],
+					content: [{ type: "text", text: capped.text }],
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10395,6 +10395,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete BU",
+			outputSchema: deleteBuServedOutputSchema,
 		},
 		async ({ buId }) => {
 			// C0.3: permanent BU deletion — master scope only
@@ -10415,6 +10416,7 @@ export function registerTools(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result as Record<string, unknown>,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
