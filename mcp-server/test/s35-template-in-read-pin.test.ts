@@ -122,7 +122,11 @@ const orgMember = (slug: string, seat: string): OAuthContext => ({
 	actor: { orgSlug: slug, agentName: seat },
 });
 const MEMBER = orgMember("org-alpha", "alpha");
-const FLEET_MEMBER = orgMember("org-fleet", "fleet");
+// A fleet-wide roster is the literal "*" in the caller's roster (scopeFilterGet reads it as master).
+const FLEET_MEMBER: OAuthContext = {
+	...orgMember("org-fleet", "fleet"),
+	fromAllowList: ["*"],
+};
 // A bearer whose org does not resolve: no actor, no clerkOrgSlug, no Clerk session.
 const NO_ORG_ROSTER: OAuthContext = {
 	...base,
