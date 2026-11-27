@@ -2817,3 +2817,159 @@ export const instantiateTemplateIntoMissionServedOutputSchema = z.looseObject({
 		),
 	count: z.number().describe("How many tasks were created."),
 });
+
+// ── mandates (the mandate tools; mcp-doctor S-51 / S-53) ─────────────────────
+// Rows come from convex/mandates.ts: `mandateObject` is the `returns:` shape of
+// mandates:get and of every row of mandates:list.
+
+const mandateStatusField = z
+	.string()
+	.describe(
+		"Where the mandate is in its life: requested, accepted, in_progress, delivered or settled.",
+	);
+
+/** A mandate row: convex/mandates.ts `mandateObject` (get_mandate, and the items of list_mandates). */
+const mandateRow = z.looseObject({
+	_id: rowId("The mandate's ID: the mandateId the mandate tools take."),
+	_creationTime: creationTime,
+	requestedBy: z
+		.string()
+		.describe("The orchestrator that commissioned the service."),
+	fulfilledBy: z
+		.string()
+		.describe("The orchestrator that provides the service."),
+	requestedById: actorId("the requester"),
+	fulfilledById: actorId("the fulfiller"),
+	service: z.string().describe("What service the mandate commissions."),
+	budget: z.number().describe("The token budget agreed for the mandate."),
+	status: mandateStatusField,
+	linkedTaskIds: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The tasks created to fulfil the mandate; absent until one is linked.",
+		),
+	tokensCost: z
+		.number()
+		.optional()
+		.describe(
+			"The tokens consumed so far; absent until the fulfiller records a cost.",
+		),
+	createdAt: ms("When the mandate was requested"),
+	updatedAt: ms("When the mandate last changed"),
+	completedAt: ms("When the mandate was settled")
+		.optional()
+		.describe(
+			"When the mandate was settled (milliseconds since the Unix epoch); absent until it is settled.",
+		),
+	spendingLimits: z
+		.looseObject({
+			maxPerTransaction: z
+				.number()
+				.describe("The most one transaction may spend, in tokens."),
+			maxPerPeriod: z
+				.number()
+				.describe("The most one period may spend in all, in tokens."),
+			periodDays: z
+				.number()
+				.optional()
+				.describe("How many days one period lasts; absent when none was set."),
+		})
+		.optional()
+		.describe(
+			"The AP2 spending limits agreed for the mandate; absent when none were set.",
+		),
+	approvedCategories: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The service categories the mandate approves; absent when none were set.",
+		),
+	mandateDocument: z
+		.string()
+		.optional()
+		.describe(
+			"The signed authorization document or its reference; absent when none was attached.",
+		),
+});
+
+/** create_mandate: the handler's own answer. */
+export const createMandateServedOutputSchema = z.looseObject({
+	mandateId: rowId(
+		"The new mandate: the mandateId the other mandate tools take.",
+	),
+	requestedBy: z
+		.string()
+		.describe("The orchestrator that commissioned the service, as given."),
+	fulfilledBy: z
+		.string()
+		.describe("The orchestrator that will provide the service, as given."),
+	service: z.string().describe("What service the mandate commissions."),
+	budget: z.number().describe("The token budget agreed for the mandate."),
+});
+
+/** accept_mandate: the handler's own answer (mandates:accept returns null). */
+export const acceptMandateServedOutputSchema = z.looseObject({
+	mandateId: rowId("The mandate that was accepted."),
+	status: z
+		.string()
+		.describe("The mandate's new status: always 'accepted' on a success."),
+});
+
+/** update_mandate: the handler's own answer (mandates:update returns null). */
+export const updateMandateServedOutputSchema = z.looseObject({
+	mandateId: rowId("The mandate that was updated."),
+	updated: z.boolean().describe("True: the update was recorded."),
+});
+
+/** settle_mandate: the handler's own answer (mandates:settle returns null). */
+export const settleMandateServedOutputSchema = z.looseObject({
+	mandateId: rowId("The mandate that was settled."),
+	status: z
+		.string()
+		.describe("The mandate's new status: always 'settled' on a success."),
+	finalCost: z
+		.number()
+		.describe("The final token cost that was recorded, as given."),
+});
+
+/** validate_mandate_spending: mandates:validateSpending `returns:`. */
+export const validateMandateSpendingServedOutputSchema = z.looseObject({
+	withinLimits: z
+		.boolean()
+		.describe(
+			"True when the proposed spend is within every limit of the mandate.",
+		),
+	reason: z
+		.string()
+		.optional()
+		.describe(
+			"Which limit the proposed spend breaks; absent when it is within the limits.",
+		),
+	currentSpend: z.number().describe("The tokens the mandate has spent so far."),
+	remainingBudget: z
+		.number()
+		.describe("The tokens left of the mandate's budget."),
+	perTransactionLimit: z
+		.number()
+		.optional()
+		.describe(
+			"The most one transaction may spend; absent when the mandate sets none.",
+		),
+	perPeriodLimit: z
+		.number()
+		.optional()
+		.describe(
+			"The most one period may spend in all; absent when the mandate sets none.",
+		),
+});
+
+/** get_mandate: one mandate row, as stored. */
+export const getMandateServedOutputSchema = mandateRow;
+
+/** list_mandates: mandates rows, newest first. */
+export const listMandatesServedOutputSchema = pageOf(
+	mandateRow,
+	"The mandates, newest first; empty when none matches the filters. Every row carries every stored field.",
+	{ scopeFiltered: pageScopeFiltered },
+);

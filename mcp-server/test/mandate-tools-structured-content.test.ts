@@ -25,7 +25,9 @@ import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 type Captured = {
-	config: { outputSchema?: { safeParse: (v: unknown) => { success: boolean } } };
+	config: {
+		outputSchema?: { safeParse: (v: unknown) => { success: boolean } };
+	};
 	handler: (args: Record<string, unknown>) => Promise<{
 		isError?: boolean;
 		content: Array<{ type: string; text: string }>;
@@ -42,7 +44,11 @@ function harness(
 	const tools = new Map<string, Captured>();
 	const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
 	const server = {
-		registerTool: (name: string, config: Captured["config"], handler: never) => {
+		registerTool: (
+			name: string,
+			config: Captured["config"],
+			handler: never,
+		) => {
 			tools.set(name, { config, handler });
 		},
 	} as unknown as Parameters<typeof registerTools>[0];
@@ -95,7 +101,10 @@ async function success(
 	expect(schema, `${name} declares an outputSchema`).toBeDefined();
 	const res = await t.handler(args);
 	expect(res.isError, res.content?.[0]?.text).not.toBe(true);
-	expect(res.structuredContent, `${name} answers structuredContent`).toBeDefined();
+	expect(
+		res.structuredContent,
+		`${name} answers structuredContent`,
+	).toBeDefined();
 	const parsed = (schema as NonNullable<typeof schema>).safeParse(
 		res.structuredContent,
 	);
@@ -301,7 +310,11 @@ describe("get_mandate", () => {
 			status: "in_progress",
 			tokensCost: 120,
 			linkedTaskIds: ["k17taskaaaaaaaaaaaaaaaaaaaaaaaaa"],
-			spendingLimits: { maxPerTransaction: 800, maxPerPeriod: 2500, periodDays: 30 },
+			spendingLimits: {
+				maxPerTransaction: 800,
+				maxPerPeriod: 2500,
+				periodDays: 30,
+			},
 			approvedCategories: ["review"],
 			mandateDocument: "doc-1",
 		});
@@ -313,9 +326,7 @@ describe("get_mandate", () => {
 
 	it("a mandate that is not there stays an error with no structuredContent", async () => {
 		const h = harness({ "mandates:get": () => null });
-		const res = await h
-			.tool("get_mandate")
-			.handler({ mandateId: MANDATE_ID });
+		const res = await h.tool("get_mandate").handler({ mandateId: MANDATE_ID });
 		expect(res.isError).toBe(true);
 		expect(res.structuredContent).toBeUndefined();
 	});
@@ -323,7 +334,15 @@ describe("get_mandate", () => {
 
 describe("list_mandates", () => {
 	it("a page under the cap: items are the rows the text shows, nextCursor null, truncated false", async () => {
-		const rows = [row(), row({ _id: "j57bbbbbbbbbbbbbbbbbbbbbbbbbbbbb", status: "settled", tokensCost: 4800, completedAt: 1_700_000_100_000 })];
+		const rows = [
+			row(),
+			row({
+				_id: "j57bbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				status: "settled",
+				tokensCost: 4800,
+				completedAt: 1_700_000_100_000,
+			}),
+		];
 		const h = harness({ "mandates:list": () => rows });
 		const res = await success(h, "list_mandates", {});
 		expect(res.structuredContent).toEqual({
@@ -335,7 +354,13 @@ describe("list_mandates", () => {
 	});
 
 	it("a full page carries the cursor in both channels", async () => {
-		const rows = [row(), row({ _id: "j57bbbbbbbbbbbbbbbbbbbbbbbbbbbbb", _creationTime: 1_699_000_000_000 })];
+		const rows = [
+			row(),
+			row({
+				_id: "j57bbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				_creationTime: 1_699_000_000_000,
+			}),
+		];
 		const h = harness({ "mandates:list": () => rows });
 		const res = await success(h, "list_mandates", { limit: 2 });
 		const text = JSON.parse(res.content[0].text) as {
@@ -375,7 +400,9 @@ describe("list_mandates", () => {
 
 	it("an invalid cursor keeps its own error shape", async () => {
 		const h = harness({ "mandates:list": () => [] });
-		const res = await h.tool("list_mandates").handler({ cursor: "not-a-cursor" });
+		const res = await h
+			.tool("list_mandates")
+			.handler({ cursor: "not-a-cursor" });
 		expect(res.isError).toBe(true);
 		expect(res.structuredContent).toEqual({
 			error: { code: "invalid_cursor", message: expect.any(String) },
