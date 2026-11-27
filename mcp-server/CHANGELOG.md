@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-11-27
+
+A major release: `create_recurring_task` requires `project`. This is a major release because a tool input changed (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
+
+### Breaking
+
+- Cloud and Self-host: `create_recurring_task` requires a `project`. A call with no `project`, an empty one or a blank one is refused before any recurring task is written. This change (#1800) was already deployed on Cloud inside 5.2.1 and never appeared in a changelog; 6.0.0 is the first published version that carries it (npm `latest` was 5.1.0, 5.2.0 and 5.2.1 were never published). Caller change: pass a project name on every `create_recurring_task`. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Self-host: `CLERK_DOMAIN` must be set. An unset, empty or whitespace-only value is refused, before any Clerk or network call, instead of defaulting to a dev Clerk instance (#1795). It must be the Frontend API origin of the Clerk instance that issued `CLERK_SECRET_KEY`. Caller change: set `CLERK_DOMAIN` on the service before upgrading. ([Self-host](README.md#self-host-a-separate-product); variable table in `docs/self-host/railway-template.md`)
+
+### Fixed
+
+- Cloud and Self-host: `list_repo_mappings` page 2 is reachable. The tool now forwards the `{time,id}` `nextCursor` it emits instead of refusing it (#1805). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: the HTTP server logs the port at startup, never the bound hostname (#1797). ([Self-host](README.md#self-host-a-separate-product))
+
+### Changed
+
+- Cloud: reading a `ui://` resource forwards the caller's verified organisation to every backend door that takes one, and refuses a bearer that has no verified organisation (#1801). No production bearer was affected (0 counted by sigma). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [5.2.1] — 2026-11-27
 
 A patch release: `list_diaries` accepts a member's own verified identities. No tool is added or removed and no tool input or output shape changes. Each entry names the product it concerns.

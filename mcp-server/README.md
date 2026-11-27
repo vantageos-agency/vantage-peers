@@ -409,6 +409,15 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 6.0.0
+
+_Applies to: Cloud and Self-host._ A major release: `create_recurring_task` requires `project`. This release is the first published version that carries it; npm `latest` was 5.1.0.
+
+- Cloud and Self-host: `create_recurring_task` requires a `project`; an empty or blank one is refused (#1800, already deployed on Cloud in 5.2.1 without a changelog entry). Upgrade note: callers of `create_recurring_task` must pass `project`.
+- Self-host: `CLERK_DOMAIN` must be set; an unset, empty or whitespace-only value is refused instead of defaulting to a dev Clerk instance (#1795). Upgrade note: set `CLERK_DOMAIN` before upgrading.
+- Cloud and Self-host: `list_repo_mappings` page 2 is reachable (#1805); the HTTP server logs the port, never the bound hostname (#1797).
+- Cloud: `ui://` resource reads forward the caller's verified organisation and refuse a bearer without one (#1801).
+
 ### 5.2.1
 
 _Applies to: Cloud and Self-host._ A patch release: a fix to `list_diaries` for member callers; no tool is added or removed and no input or output shape changes.
