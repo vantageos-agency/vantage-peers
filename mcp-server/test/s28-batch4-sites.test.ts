@@ -99,7 +99,7 @@ async function readMemoryQuote(ctx: OAuthContext | undefined) {
 	await Promise.all([server.connect(st), client.connect(ct)]);
 	try {
 		await client.readResource({
-			uri: "ui://vp/v1/memory-quote?namespace=orchestrator/clio",
+			uri: "ui://vp/v1/memory-quote?namespace=orchestrator%2Fclio",
 		});
 		return { calls, refused: false };
 	} catch {
@@ -142,7 +142,7 @@ describe("memory-quote -> memories:listMemories forwards the agent ID the caller
 		const client = new Client({ name: "c", version: "0.0.0" });
 		await Promise.all([server.connect(st), client.connect(ct)]);
 		await client.readResource({
-			uri: "ui://vp/v1/memory-quote?namespace=orchestrator/clio&verifiedActor=evil",
+			uri: "ui://vp/v1/memory-quote?namespace=orchestrator%2Fclio&verifiedActor=evil",
 		});
 		await client.close();
 		const c = calls.find((x) => x.name === door);
