@@ -3091,3 +3091,176 @@ export const listBusServedOutputSchema = pageOf(
 export const deleteBuServedOutputSchema = z.looseObject({
 	deleted: z.boolean().describe("True when the business unit was deleted."),
 });
+
+// ── issues (the issue tools; mcp-doctor S-51 / S-53 / S-54) ──────────────────
+// Rows come from convex/issues.ts: the `issues` table (convex/schema.ts) is what
+// issues:getByRepoNumber and every issues:listBy* door return (their `returns:`
+// is not narrower than a stored row; `fields=lite` is accepted and changes
+// nothing), and `issues:getStats` declares its own `returns:` object.
+
+const issueStatusField = z
+	.string()
+	.describe(
+		"Where the issue is in its life: open, in_progress, fixed, verified or closed.",
+	);
+const issueRepo = z
+	.string()
+	.describe("The full GitHub repository name, e.g. 'owner/name'.");
+const issueNumber = z
+	.number()
+	.describe("The issue's number in its GitHub repository.");
+
+/** A stored issue row: convex/schema.ts `issues`. */
+const issueRow = z.looseObject({
+	_id: rowId("The tracked issue's ID."),
+	_creationTime: creationTime,
+	repo: issueRepo,
+	issueNumber,
+	title: z.string().describe("The issue's title."),
+	body: z.string().describe("The issue's description, cut to 2000 characters."),
+	htmlUrl: z.string().describe("The issue's URL on GitHub."),
+	labels: z.array(z.string()).describe("The labels on the GitHub issue."),
+	status: issueStatusField,
+	priority: z
+		.string()
+		.describe(
+			"How urgent it is, derived from its labels: urgent, high, medium or low.",
+		),
+	assignedOrchestrator: z
+		.string()
+		.describe("The orchestrator the issue's repository routes it to."),
+	project: z
+		.string()
+		.describe("The project the issue's repository belongs to."),
+	fixCommits: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The commits linked as its fix; absent until link_commit_to_issue links one.",
+		),
+	fixedBy: z
+		.string()
+		.optional()
+		.describe("Who fixed it; absent until a fix commit is linked."),
+	fixedAt: ms("When the fix commit was linked").optional(),
+	verifiedBy: z
+		.string()
+		.optional()
+		.describe("Who verified the fix; absent until verify_issue is called."),
+	verifiedAt: ms("When the fix was verified").optional(),
+	linkedTaskIds: z
+		.array(z.string())
+		.optional()
+		.describe("The tasks linked to the issue; absent when none is."),
+	githubCreatedAt: ms("When the issue was opened on GitHub"),
+	githubUpdatedAt: ms("When the issue last changed on GitHub"),
+	externalRepo: z
+		.string()
+		.optional()
+		.describe(
+			"For a contribution to a third-party repository, that repository; absent otherwise.",
+		),
+	externalIssueNumber: z
+		.number()
+		.optional()
+		.describe(
+			"The issue's number in that third-party repository; absent otherwise.",
+		),
+	externalIssueUrl: z
+		.string()
+		.optional()
+		.describe(
+			"The issue's URL in that third-party repository; absent otherwise.",
+		),
+	prUrl: z
+		.string()
+		.optional()
+		.describe(
+			"The pull request that answers it; absent when none was recorded.",
+		),
+	prStatus: z
+		.string()
+		.optional()
+		.describe(
+			"That pull request's state: draft, open, merged or closed; absent when none was recorded.",
+		),
+	forkRepo: z
+		.string()
+		.optional()
+		.describe("The fork the contribution was prepared in; absent otherwise."),
+	orgId: orgSlug("issue"),
+	clerkOrgId: clerkOrgId("issue"),
+});
+
+/** list_issues: the handler's own object (count, the rows, the continuation). */
+export const listIssuesServedOutputSchema = z.looseObject({
+	count: z.number().describe("How many issues are in `issues`."),
+	issues: z
+		.array(issueRow)
+		.describe(
+			"The issues, newest first; empty when none matches the filters. Every row carries every stored field.",
+		),
+	nextCursor: z
+		.string()
+		.nullable()
+		.optional()
+		.describe(
+			"The cursor to pass as `cursor` for the next (older) page; absent on the last page, and when the page was cut.",
+		),
+	truncated: z
+		.boolean()
+		.optional()
+		.describe(
+			"True when the page exceeded the 60 KB response cap and `issues` holds only its first rows; absent when `issues` is the whole page.",
+		),
+});
+
+/**
+ * get_issue: one issue row in an `issue` wrapper. The wrapper exists so that an
+ * issue that is absent stays a success: its text is { "error": "Issue not found" }
+ * and structuredContent is { issue: null }.
+ */
+export const getIssueServedOutputSchema = z.looseObject({
+	issue: issueRow
+		.nullable()
+		.describe("The issue; null when none matches the repo and number."),
+});
+
+/** update_issue_status: the handler's own answer (issues:updateStatus returns null). */
+export const updateIssueStatusServedOutputSchema = z.looseObject({
+	repo: issueRepo,
+	issueNumber,
+	status: issueStatusField,
+	updated: z.boolean().describe("True: the new status was recorded."),
+});
+
+/** link_commit_to_issue: the handler's own answer (issues:linkCommit returns null). */
+export const linkCommitToIssueServedOutputSchema = z.looseObject({
+	repo: issueRepo,
+	issueNumber,
+	commitSha: z.string().describe("The commit SHA, as given."),
+	fixedBy: z.string().describe("Who fixed it, as given."),
+	linked: z.boolean().describe("True: the commit was linked to the issue."),
+});
+
+/** verify_issue: the handler's own answer (issues:verify returns null). */
+export const verifyIssueServedOutputSchema = z.looseObject({
+	repo: issueRepo,
+	issueNumber,
+	verifiedBy: z.string().describe("Who verified the fix, as given."),
+	verified: z.boolean().describe("True: the issue is now marked verified."),
+});
+
+/** issue_stats: issues:getStats `returns:`. */
+export const issueStatsServedOutputSchema = z.looseObject({
+	open: z.number().describe("How many issues are open."),
+	in_progress: z.number().describe("How many issues are in progress."),
+	fixed: z.number().describe("How many issues are fixed and not yet verified."),
+	verified: z.number().describe("How many issues are verified."),
+	closed: z.number().describe("How many issues are closed."),
+	total: z
+		.number()
+		.describe(
+			"How many issues were counted in all (the scan stops at 1000 rows).",
+		),
+});

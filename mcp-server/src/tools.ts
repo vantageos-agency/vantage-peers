@@ -110,6 +110,12 @@ import {
 	getBuServedOutputSchema,
 	listBusServedOutputSchema,
 	deleteBuServedOutputSchema,
+	listIssuesServedOutputSchema,
+	getIssueServedOutputSchema,
+	updateIssueStatusServedOutputSchema,
+	linkCommitToIssueServedOutputSchema,
+	verifyIssueServedOutputSchema,
+	issueStatsServedOutputSchema,
 	acceptMandateServedOutputSchema,
 	updateMandateServedOutputSchema,
 	settleMandateServedOutputSchema,
@@ -11140,6 +11146,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List issues",
+			outputSchema: listIssuesServedOutputSchema,
 		},
 		async ({ project, status, assignedTo, limit, fields, cursor }) => {
 			try {
@@ -11231,17 +11238,10 @@ export function registerTools(
 							}
 						: { count: filteredIssues.length, issues: filteredIssues };
 
+				const capped = capPageField(payload, "issues", "list_issues");
 				return {
-					content: [
-						{
-							type: "text",
-							text: capListResponseBytes(
-								filteredIssues,
-								JSON.stringify(payload, null, 2),
-								"list_issues",
-							),
-						},
-					],
+					content: [{ type: "text", text: capped.text }],
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11274,6 +11274,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get issue",
+			outputSchema: getIssueServedOutputSchema,
 		},
 		async ({ repo, issueNumber }) => {
 			try {
@@ -11287,6 +11288,8 @@ export function registerTools(
 					issue as any,
 				);
 
+				// An issue that is not there is a success: its text says so, and
+				// structuredContent is { issue: null }.
 				return {
 					content: [
 						{
@@ -11298,6 +11301,9 @@ export function registerTools(
 							),
 						},
 					],
+					structuredContent: {
+						issue: (filteredIssue ?? null) as Record<string, unknown> | null,
+					},
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11329,6 +11335,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update issue status",
+			outputSchema: updateIssueStatusServedOutputSchema,
 		},
 		async ({ repo, issueNumber, status }) => {
 			// C0.5: no orchestrator identity arg — master scope only
@@ -11341,17 +11348,12 @@ export function registerTools(
 					status,
 				});
 
+				const structured = { repo, issueNumber, status, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ repo, issueNumber, status, updated: true },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11387,6 +11389,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Link commit to issue",
+			outputSchema: linkCommitToIssueServedOutputSchema,
 		},
 		async ({ repo, issueNumber, commitSha, fixedBy }) => {
 			try {
@@ -11397,17 +11400,18 @@ export function registerTools(
 					fixedBy,
 				});
 
+				const structured = {
+					repo,
+					issueNumber,
+					commitSha,
+					fixedBy,
+					linked: true,
+				};
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ repo, issueNumber, commitSha, fixedBy, linked: true },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11439,6 +11443,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Verify issue",
+			outputSchema: verifyIssueServedOutputSchema,
 		},
 		async ({ repo, issueNumber, verifiedBy }) => {
 			try {
@@ -11448,17 +11453,12 @@ export function registerTools(
 					verifiedBy,
 				});
 
+				const structured = { repo, issueNumber, verifiedBy, verified: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ repo, issueNumber, verifiedBy, verified: true },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11496,6 +11496,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Issue statistics",
+			outputSchema: issueStatsServedOutputSchema,
 		},
 		async ({ project }) => {
 			try {
@@ -11508,6 +11509,14 @@ export function registerTools(
 					stats as any,
 				);
 
+				// issues:getStats always answers an object; a master caller is never
+				// filtered. Anything else is not a statistics answer: refuse it
+				// rather than declare a success that has no structuredContent.
+				if (filteredStats === null || typeof filteredStats !== "object") {
+					return mcpError(
+						"issue_stats: no statistics are available to this caller",
+					);
+				}
 				return {
 					content: [
 						{
@@ -11515,6 +11524,7 @@ export function registerTools(
 							text: JSON.stringify(filteredStats, null, 2),
 						},
 					],
+					structuredContent: filteredStats as Record<string, unknown>,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
