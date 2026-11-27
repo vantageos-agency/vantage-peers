@@ -8,11 +8,11 @@ import { describe, expect, it } from "vitest";
  * Full-suite gates for the Python test suites two disabled workflows ran.
  *
  * GitHub Actions are disabled on this repository, so .github/workflows/pytest-hooks.yml and
- * .github/workflows/plugin-vr-parity.yml run no job. These tests ARE the gates: `npx vitest run`
+ * the retired plugin-vr-parity workflow run no job. These tests ARE the gates: `npx vitest run`
  * at the repo root collects them and runs the same pytest targets, requiring exit code 0.
  *
  * Ported: `pytest tests/hooks/` (pytest-hooks.yml) and the two plugin files that need no secret
- * (plugin-vr-parity.yml: test_source_prose_identity_guard.py, test_check_outward_contribution_verdict.py).
+ * (the retired plugin-vr-parity workflow: test_source_prose_identity_guard.py, test_check_outward_contribution_verdict.py).
  *
  * NOT ported (declared here, where the reader sees it): tests/plugin/test_leak_guard.py needs the
  * client-identity vocabulary (VANTAGE_CLIENT_IDENTITIES or VANTAGE_CLIENT_HASHES) and
@@ -49,7 +49,7 @@ function pytest(targets) {
 	).toBe(0);
 }
 
-describe("pytest gates (ported from pytest-hooks.yml and plugin-vr-parity.yml)", () => {
+describe("pytest gates (ported from pytest-hooks.yml and the retired plugin-vr-parity workflow)", () => {
 	it("tests/hooks/ passes", () => {
 		pytest(["tests/hooks/"]);
 	}, 300_000);

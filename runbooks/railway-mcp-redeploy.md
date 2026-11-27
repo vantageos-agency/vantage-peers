@@ -46,6 +46,41 @@ Limits, stated: the check sees a missing function, not a changed argument (rule 
 
 Between step 3 and step 5 the OLD MCP is live against the NEW backend. If the Convex change drops a field the old MCP reads, `check_messages`-style crashes return. Split it: **expand** (additive Convex change; the MCP tolerates both shapes) → ship MCP → **contract** (the removal, in a later rollout). Never remove and consume in one rollout.
 
+## Retired workflows: where each check lives now (GitHub Actions are off, ruling 2026-11-24)
+
+Four workflows needed secrets or production, which `npx vitest run` never holds, so they could not be ported. They were deleted; each check is a manual step with an owner.
+
+### Post-deploy CRUD smoke (was `mcp-crud-baseline.yml`)
+
+Step 6 above is the replacement: `scripts/post-deploy-probe.mjs` under `infisical run --env=prod --path=/shared`, after every MCP deploy. The retired workflow ran `tests/e2e/mcp-crud-baseline.spec.ts` against Railway production on a schedule; that spec is still runnable by hand with `bun run test:e2e:mcp-crud` under the same `infisical run`, with `VP_MCP_PROD_URL`, `VP_MCP_BEARER_TOKEN` and `VP_MCP_AGENT_CREDENTIAL` from the vault. Applies to: Cloud (the probe targets `https://mcp.vantagepeers.com/mcp`).
+
+### npm publish of `vantage-peers-mcp` (was `npm-publish.yml`)
+
+Applies to: Self-host (the stdio package). The release is published by hand from the merge commit, never from a branch:
+
+1. Check out the merge sha of the release PR. The retired workflow installed from the repository root with the package manager `npm` (the root `package.json` declares workspaces, so a lockfile-strict `npm ci` fails with EUSAGE), then built in `mcp-server/` with `npm run build` (also run by `prepublishOnly`). Prove the tarball before publishing: `npm pack --dry-run` in `mcp-server/` must list `build/`.
+2. Export `ETA_APPROVED_TASK_ID` and `ETA_APPROVED_COMMIT_SHA` (the reviewer's approval task and the merge sha); the hook `enforce-eta-approval-before-npm-publish` refuses `npm publish` without them.
+3. `infisical run --env=prod --path=/shared --projectId=<ma-fabrique project id> -- npm publish --access public` from `mcp-server/` (the token is `NPM_TOKEN`, folder `/shared`; an override marker `# allow-cross-package-manager: npm publish is the registry verb` is needed where the hook derives bun). The retired workflow also passed `--provenance`; a local publish cannot generate provenance ("Automatic provenance generation not supported for provider: null"), so a release published this way carries none. That is a known loss, stated here rather than hidden.
+4. **Prove the publication at the registry, never by the publish output**: `npm view vantage-peers-mcp dist-tags --json` and `npm view vantage-peers-mcp@<version> version`, re-read with a cache-buster (a fresh `--cache <empty dir>`) until `latest` equals the released version. A publish with `--tag alpha` leaves `latest` unmoved.
+
+### Convex codegen drift (was `check-generated.yml`, second step)
+
+Its module-coverage step runs in the suite (`scripts/__tests__/generated-and-lockfile-gates.test.mjs`). The drift step needs a Convex deploy key, and `convex/` belongs to sigma, who owns every Convex deployment. **Sigma's step at deploy time**: `npx convex codegen` then `git diff --exit-code convex/_generated`; a non-empty diff blocks the deploy until the regenerated files are committed. Nobody else runs it, and nothing under `convex/` is edited from the MCP side.
+
+### Plugin release gates (was `plugin-vr-parity.yml`, secret-gated half)
+
+`test_source_prose_identity_guard.py` and `test_check_outward_contribution_verdict.py` run in the suite (`scripts/__tests__/pytest-gates.test.mjs`). `test_leak_guard.py`, the real-perimeter source-prose scan and `test_vr_parity.py` need the client vocabulary and the VantageRegistry token, so they run at plugin release, from the repository root, with the secrets in the process environment only. The retired workflow's own commands, in its order (secrecy before parity: a leak fails even if the registry is down):
+
+```
+infisical run --env=prod --path=/shared --projectId=<ma-fabrique project id> -- bash -c '
+  set -euo pipefail
+  pytest tests/plugin/test_leak_guard.py -v
+  python3 scripts/source_prose_identity_guard.py
+  pytest tests/plugin/test_vr_parity.py -v'
+```
+
+The workflow read `VANTAGE_CLIENT_HASHES` (salted-hash vocabulary) and `VANTAGE_REGISTRY_TOKEN`. Measured 2026-11-27: `vault-get VANTAGE_CLIENT_HASHES` and `vault-get VANTAGE_REGISTRY_TOKEN` both report `absent` (all folders, prod); `NPM_TOKEN` is found at `/shared`. Until those two names are provisioned in the vault (or mapped to existing ones, for example `VANTAGE_REGISTRY_API_KEY`), the command above stops loudly on a missing variable; do not fall back to another source.
+
 ## Pitfalls (each cost real time or an incident)
 
 - **`railway` CLI unauthorized** → no CLI deploy. Don't burn time trying to `railway up`; ship by GraphQL `serviceInstanceDeployV2` with the commit SHA (step 5), or from the dashboard.
