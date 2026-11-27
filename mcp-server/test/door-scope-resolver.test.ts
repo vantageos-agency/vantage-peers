@@ -31,6 +31,7 @@ import * as mandates from "../../convex/mandates";
 import * as memories from "../../convex/memories";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
+import * as missionTemplates from "../../convex/missionTemplates";
 import * as recurringTasks from "../../convex/recurringTasks";
 import * as tasks from "../../convex/tasks";
 import * as toolUsage from "../../convex/toolUsage";
@@ -65,6 +66,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	memories,
 	messages,
 	missions,
+	missionTemplates,
 	recurringTasks,
 	tasks,
 	toolUsage,
