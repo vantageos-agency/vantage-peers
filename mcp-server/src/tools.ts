@@ -48,6 +48,10 @@ import {
 	verifiedOrgSlugOf,
 } from "./doorScope.js";
 import {
+	type IdentityFacts,
+	unresolvedOrgDenial as identityUnresolvedOrgDenial,
+} from "./identityDenial.js";
+import {
 	BareStateLiteralError,
 	FreshStateGuardError,
 	guardFreshState,
@@ -2799,14 +2803,16 @@ export function registerTools(
 	// and not a Clerk session, whose own org Convex already sees) is refused here,
 	// before Convex, instead of reaching a door that would compare names only.
 	// The fleet master and the stdio trust context are not this population.
+	const identityFacts = (): IdentityFacts => ({
+		isMaster: oauthCtx?.isMaster === true,
+		hasClerkJwt: oauthCtx?.clerkJwt !== undefined,
+		verifiedOrg: verifiedOrgOf(),
+		hasVerifiedActor: verifiedActor !== undefined,
+	});
+	// The refusal is produced by identityDenial.ts (the single RBAC_DENIED site).
 	const unresolvedOrgDenial = (door: string) => {
-		if (oauthCtx?.isMaster === true || oauthCtx?.clerkJwt !== undefined) {
-			return null;
-		}
-		if (verifiedOrgOf() !== undefined) return null;
-		return mcpError(
-			`RBAC_DENIED: ${door} needs the caller's verified organisation and this bearer resolves none — ${JSON.stringify({ reason: "verified-org-unresolved", door })}`,
-		);
+		const denial = identityUnresolvedOrgDenial(identityFacts(), door);
+		return denial === null ? null : mcpError(denial);
 	};
 	// Delegation guard — distinct question from the acting-name gates (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
