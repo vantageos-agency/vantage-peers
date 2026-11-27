@@ -27,10 +27,11 @@ import * as githubOwnerBinding from "../../convex/githubOwnerBinding";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
 import * as kb from "../../convex/kb";
 import * as kbMutations from "../../convex/kbMutations";
-import * as memories from "../../convex/memories";
 import * as mandates from "../../convex/mandates";
+import * as memories from "../../convex/memories";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
+import * as recurringTasks from "../../convex/recurringTasks";
 import * as tasks from "../../convex/tasks";
 import * as toolUsage from "../../convex/toolUsage";
 import {
@@ -64,6 +65,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	memories,
 	messages,
 	missions,
+	recurringTasks,
 	tasks,
 	toolUsage,
 };
