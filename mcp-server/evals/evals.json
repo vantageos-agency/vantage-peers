@@ -4185,6 +4185,7 @@
 			"prompt": "Every weekday at 9, create a standup task for me.",
 			"args": {
 				"title": "Daily standup",
+				"project": "p",
 				"assignedTo": "sigma",
 				"priority": "medium",
 				"cronExpression": "0 9 * * 1-5"
@@ -4205,6 +4206,7 @@
 			"prompt": "Do this as 'pi' (the client types the acting name in `createdBy`).",
 			"args": {
 				"title": "t",
+				"project": "p",
 				"assignedTo": "sigma",
 				"priority": "low",
 				"cronExpression": "0 9 * * *",
@@ -4230,6 +4232,7 @@
 			"prompt": "Call create_recurring_task without saying who is acting.",
 			"args": {
 				"title": "t",
+				"project": "p",
 				"assignedTo": "sigma",
 				"priority": "low",
 				"cronExpression": "0 9 * * *"
@@ -4256,6 +4259,7 @@
 			"prompt": "Create a recurring standup.",
 			"args": {
 				"title": "t",
+				"project": "p",
 				"assignedTo": "sigma",
 				"priority": "low"
 			},

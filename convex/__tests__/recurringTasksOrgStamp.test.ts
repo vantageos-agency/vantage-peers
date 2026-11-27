@@ -82,6 +82,7 @@ describe("the schedule carries the verified agent's organisation", () => {
 	test("CLIENT AGENT: stamped with org-a's slug and Clerk org ID, listed in org-a only", async () => {
 		const clioA = await agentIdOf(t, "org-a", "clio");
 		const id = await svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			...base,
 			assignedTo: "vera",
 			createdBy: "clio",
@@ -105,6 +106,7 @@ describe("the schedule carries the verified agent's organisation", () => {
 			return { id: row?._id, org: row?.orgSlug };
 		});
 		const id = await svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			...base,
 			assignedTo: "pi",
 			createdBy: "sigma",
@@ -117,6 +119,7 @@ describe("the schedule carries the verified agent's organisation", () => {
 
 	test("NO AGENT: the service account keeps writing fleet (unstamped) schedules", async () => {
 		const id = await svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			...base,
 			assignedTo: "pi",
 			createdBy: "sigma",

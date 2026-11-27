@@ -129,6 +129,7 @@ const getRow = (id: Id<"recurringTasks">) => t.run((ctx) => ctx.db.get(id));
 
 const createArgs = (over: Record<string, unknown> = {}) => ({
 	title: "standup",
+	project: "p",
 	assignedTo: "vera",
 	priority: "medium" as const,
 	cronExpression: "0 9 * * *",
@@ -207,6 +208,7 @@ describe("(a) assign: the assignee is an agent of the schedule's own org", () =>
 describe("(b) create: the creator is the verified caller", () => {
 	test("the human path records the person as its own ID", async () => {
 		const id = await memberOf(t, "org-a").mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "h",
 			assignedTo: "vera",
 			priority: "low",
@@ -294,6 +296,7 @@ describe("(c) doors on the agent path decide on IDs", () => {
 		// Seeded as a legacy/renamed row: label "clio", IDs of org-b's clio.
 		const id = await t.run((ctx) =>
 			ctx.db.insert("recurringTasks", {
+				project: "p",
 				title: "renamed",
 				assignedTo: "clio",
 				assignedToId: clioB,
@@ -336,6 +339,7 @@ describe("(c) doors on the agent path decide on IDs", () => {
 
 describe("(d) spawn: the task carries the schedule's IDs", () => {
 	const dueRow = (over: Record<string, unknown>) => ({
+		project: "p",
 		title: "spawned",
 		assignedTo: "vera",
 		createdBy: "clio",
@@ -395,6 +399,7 @@ describe("(e) list: assignee by ID, absence stays an absence", () => {
 	test("by assignee: own org's schedule is served; a label that names an agent only in another org is an absence, never that org's rows", async () => {
 		await asServiceAccount(t).mutation(api.recurringTasks.create, createArgs());
 		await memberOf(t, "org-b").mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "theirs",
 			assignedTo: "zed",
 			priority: "low",
@@ -426,6 +431,7 @@ describe("(f) the fleet service account keeps its grants", () => {
 		const fleet = await seedFleetAgents(t, ["sigma", "eta"]);
 		const svc = asServiceAccount(t);
 		const id = await svc.mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "fleet",
 			assignedTo: "eta",
 			priority: "low",

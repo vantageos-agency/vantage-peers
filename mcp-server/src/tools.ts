@@ -8878,7 +8878,8 @@ export function registerTools(
 		"Create a recurring task template that auto-generates tasks on a cron schedule. " +
 			"Returns { taskId, cronExpression }: taskId is the new template's ID (the recurringTaskId other recurring tools take). " +
 			"WHEN: use for daily standups, weekly reviews, or any repeating work item pattern. " +
-			"EXAMPLE: create_recurring_task title='Daily standup' assignedTo='alpha' priority='medium' cronExpression='0 9 * * *' createdBy='alpha'.",
+			"`project` is required: a schedule with no project is refused, because every task it generates carries that project and billing groups done tasks by it. " +
+			"EXAMPLE: create_recurring_task title='Daily standup' project='vantage-peers' assignedTo='alpha' priority='medium' cronExpression='0 9 * * *' createdBy='alpha'.",
 		{
 			title: z
 				.string()
@@ -8888,7 +8889,11 @@ export function registerTools(
 			priority: z
 				.enum(["urgent", "high", "medium", "low"])
 				.describe("How urgent each generated task is for its assignee: urgent work comes before low in their queue."),
-			project: z.string().optional().describe("The project every generated task belongs to. Omit for none."),
+			project: z
+				.string()
+				.trim()
+				.min(1)
+				.describe("The billing line every generated task belongs to, e.g. 'vantage-peers': the same name create_task's project takes (surrounding spaces trimmed, an empty one refused)."),
 			tags: flexArray.optional().describe("Labels copied onto each generated task, e.g. ['standup']; a 'review' tag lets a previous assignee reclaim the task. Omit for none."),
 			cronExpression: z
 				.string()

@@ -38,6 +38,7 @@ async function seedRecurringTask(
 	// M10h: the assignee is an agent of the operator org, resolved by ID.
 	await seedFleetAgents(t, ["sigma"]);
 	return await asMaster(t).mutation(api.recurringTasks.create, {
+		project: "p",
 		title: overrides.title ?? "GAP-T1 nightly KB compaction",
 		description: "Auto-spawned by recurring template for regression test",
 		assignedTo: "sigma",
@@ -222,6 +223,7 @@ describe("getNextRunTime — day-of-month / month fields", () => {
 		const seed = (title: string, cronExpression: string) =>
 			t.run(async (ctx) =>
 				ctx.db.insert("recurringTasks", {
+					project: "p",
 					title,
 					assignedTo: "sigma",
 					priority: "medium" as const,

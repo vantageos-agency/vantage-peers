@@ -755,6 +755,7 @@ DOORS.push({
 		served(
 			await as(seatA, "create_recurring_task", {
 				title: "own schedule",
+				project: "p",
 				assignedTo: "ivo",
 				priority: "low",
 				cronExpression: "0 9 * * *",
@@ -772,6 +773,7 @@ DOORS.push({
 		// A schedule created by org A never lands in B and is not B's to see.
 		await seed(seatA, "create_recurring_task", {
 			title: "a only schedule",
+			project: "p",
 			assignedTo: "ivo",
 			priority: "low",
 			cronExpression: "0 9 * * *",

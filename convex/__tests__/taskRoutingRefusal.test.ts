@@ -288,6 +288,7 @@ describe("ADOPTED org: createOrUpdateReviewTask's assignedTo override", () => {
 		repoFullName,
 		prNumber: 7,
 		prTitle: "t",
+		project: "p",
 		priority: "medium" as const,
 		createdBy: "system",
 		...(assignedTo !== undefined ? { assignedTo } : {}),
@@ -382,6 +383,7 @@ describe("NOT ADOPTED org: today's behaviour, exactly", () => {
 		await seed(t);
 		expect(
 			await t.mutation(internal.tasks.createOrUpdateReviewTask, {
+				project: "p",
 				repoFullName: "org-b/mine",
 				prNumber: 7,
 				prTitle: "t",

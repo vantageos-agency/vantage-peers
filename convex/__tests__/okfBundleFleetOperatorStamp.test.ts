@@ -152,6 +152,7 @@ describe("fleet OKF bundle after the operator-slug stamp", () => {
 			},
 		);
 		const taskId = await t.mutation(internal.okfBundle._insertImportedTask, {
+			project: "p",
 			namespace: PHASE1_NAMESPACE,
 			title: "stamped-task",
 			description: "desc stamped-task",

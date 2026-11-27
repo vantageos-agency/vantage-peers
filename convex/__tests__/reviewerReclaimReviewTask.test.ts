@@ -256,6 +256,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(internal.tasks.createOrUpdateReviewTask, {
+			project: "p",
 			repoFullName: "acme/widget",
 			prNumber: 42,
 			prTitle: "Ship the thing",

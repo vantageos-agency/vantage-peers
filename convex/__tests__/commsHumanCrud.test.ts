@@ -182,6 +182,7 @@ async function seedRecurring(t: T, owner: Owner, active = true) {
 	const now = Date.now();
 	return await t.run(async (ctx) =>
 		ctx.db.insert("recurringTasks", {
+			project: "p",
 			title: "Weekly seed",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -689,6 +690,7 @@ describe("human CRUD — messages:sendMessage", () => {
 describe("human CRUD — recurringTasks:create", () => {
 	const args = {
 		title: "Weekly from the dashboard",
+		project: "p",
 		assignedTo: "sigma",
 		priority: "medium" as const,
 		cronExpression: "0 9 * * *",

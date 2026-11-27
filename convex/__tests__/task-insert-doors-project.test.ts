@@ -40,7 +40,8 @@ async function world() {
 }
 type T = Awaited<ReturnType<typeof world>>;
 const asMaster = (t: T) => t.withIdentity({ subject: SERVICE_ACCOUNT });
-const allTasks = (t: T) => t.run(async (ctx) => ctx.db.query("tasks").collect());
+const allTasks = (t: T) =>
+	t.run(async (ctx) => ctx.db.query("tasks").collect());
 
 const webhookBase = {
 	title: "Webhook task",
@@ -53,12 +54,20 @@ const webhookBase = {
 describe("tasks:createForWebhook (GitHub webhook create)", () => {
 	test("REFUSED: project omitted / empty / whitespace, no row written", async () => {
 		const t = await world();
-		await expect(t.mutation(internal.tasks.createForWebhook, webhookBase)).rejects.toThrow(CODE);
 		await expect(
-			t.mutation(internal.tasks.createForWebhook, { ...webhookBase, project: "" }),
+			t.mutation(internal.tasks.createForWebhook, webhookBase),
 		).rejects.toThrow(CODE);
 		await expect(
-			t.mutation(internal.tasks.createForWebhook, { ...webhookBase, project: "  " }),
+			t.mutation(internal.tasks.createForWebhook, {
+				...webhookBase,
+				project: "",
+			}),
+		).rejects.toThrow(CODE);
+		await expect(
+			t.mutation(internal.tasks.createForWebhook, {
+				...webhookBase,
+				project: "  ",
+			}),
 		).rejects.toThrow(CODE);
 		expect(await allTasks(t)).toHaveLength(0);
 	});
@@ -157,11 +166,18 @@ describe("recurringTasks: a schedule carries a project, so every spawn inherits 
 
 	test("REFUSED: create without / with empty project", async () => {
 		const t = await world();
-		await expect(asMaster(t).mutation(api.recurringTasks.create, scheduleBase)).rejects.toThrow(CODE);
 		await expect(
-			asMaster(t).mutation(api.recurringTasks.create, { ...scheduleBase, project: " " }),
+			asMaster(t).mutation(api.recurringTasks.create, scheduleBase),
 		).rejects.toThrow(CODE);
-		expect(await t.run(async (ctx) => ctx.db.query("recurringTasks").collect())).toHaveLength(0);
+		await expect(
+			asMaster(t).mutation(api.recurringTasks.create, {
+				...scheduleBase,
+				project: " ",
+			}),
+		).rejects.toThrow(CODE);
+		expect(
+			await t.run(async (ctx) => ctx.db.query("recurringTasks").collect()),
+		).toHaveLength(0);
 	});
 
 	test("PRESENT: create stores the trimmed project; the spawn inherits it", async () => {
@@ -172,7 +188,9 @@ describe("recurringTasks: a schedule carries a project, so every spawn inherits 
 		});
 		const row = await t.run(async (ctx) => ctx.db.get(id));
 		expect(row?.project).toBe("vantage-peers");
-		await t.run(async (ctx) => ctx.db.patch(id, { nextRunAt: Date.now() - 1_000 }));
+		await t.run(async (ctx) =>
+			ctx.db.patch(id, { nextRunAt: Date.now() - 1_000 }),
+		);
 		await t.mutation(internal.recurringTasks.processDueTasks, {});
 		const spawned = await allTasks(t);
 		expect(spawned).toHaveLength(1);
@@ -257,10 +275,13 @@ describe("missionTemplates:instantiateTemplateIntoMission", () => {
 		const t = await world();
 		const missionId = await seed(t, "  ");
 		await expect(
-			asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
-				templateName: "tpl",
-				missionId,
-			}),
+			asMaster(t).mutation(
+				api.missionTemplates.instantiateTemplateIntoMission,
+				{
+					templateName: "tpl",
+					missionId,
+				},
+			),
 		).rejects.toThrow(CODE);
 		expect(await allTasks(t)).toHaveLength(0);
 	});
@@ -268,10 +289,13 @@ describe("missionTemplates:instantiateTemplateIntoMission", () => {
 	test("PRESENT: the tasks inherit the mission's project", async () => {
 		const t = await world();
 		const missionId = await seed(t, "proj-x");
-		await asMaster(t).mutation(api.missionTemplates.instantiateTemplateIntoMission, {
-			templateName: "tpl",
-			missionId,
-		});
+		await asMaster(t).mutation(
+			api.missionTemplates.instantiateTemplateIntoMission,
+			{
+				templateName: "tpl",
+				missionId,
+			},
+		);
 		const rows = await allTasks(t);
 		expect(rows.map((r) => r.project)).toEqual(["proj-x"]);
 	});
@@ -293,7 +317,10 @@ describe("OKF import", () => {
 	test("REFUSED: _insertImportedTask with an empty project", async () => {
 		const t = await world();
 		await expect(
-			t.mutation(internal.okfBundle._insertImportedTask, { ...insertArgs, project: " " }),
+			t.mutation(internal.okfBundle._insertImportedTask, {
+				...insertArgs,
+				project: " ",
+			}),
 		).rejects.toThrow(CODE);
 		expect(await allTasks(t)).toHaveLength(0);
 	});
@@ -304,7 +331,9 @@ describe("OKF import", () => {
 			...insertArgs,
 			project: "elpi-corp",
 		});
-		expect((await t.run(async (ctx) => ctx.db.get(id)))?.project).toBe("elpi-corp");
+		expect((await t.run(async (ctx) => ctx.db.get(id)))?.project).toBe(
+			"elpi-corp",
+		);
 	});
 
 	async function bundleWithTask(project: string | undefined) {
@@ -319,7 +348,10 @@ describe("OKF import", () => {
 			...(project !== undefined ? { project } : {}),
 		});
 		return await packTarball([
-			{ path: "index.md", content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n' },
+			{
+				path: "index.md",
+				content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n',
+			},
 			{ path: tsk.filePath, content: tsk.content },
 		]);
 	}
@@ -352,17 +384,35 @@ describe("OKF import", () => {
 		expect((await allTasks(t)).map((r) => r.project)).toEqual(["elpi-corp"]);
 	});
 
-	test("REFUSED: no frontmatter project and a namespace that names none, nothing written", async () => {
+	test("REFUSED: no frontmatter project and a namespace that names none -> reported in conflicts, not written, rest of the bundle imported", async () => {
 		const t = await world();
-		const storageId = await store(t, await bundleWithTask(undefined));
-		await expect(
-			asMaster(t).action(IMPORT, {
-				storageId,
-				targetNamespace: "global",
-				mode: "merge",
-				idempotencyKey: "k-none",
-			}),
-		).rejects.toThrow(CODE);
+		const tsk = serializeTask({
+			_id: "k179tsk901",
+			title: "No project",
+			description: "Body.",
+			status: "todo",
+			priority: "medium",
+			assignedTo: "sigma",
+			createdBy: "sigma",
+		});
+		const buf = await packTarball([
+			{
+				path: "index.md",
+				content: '---\nokf_version: "0.1"\ntype: index\n---\n# Bundle\n',
+			},
+			{ path: tsk.filePath, content: tsk.content },
+		]);
+		const storageId = await store(t, buf);
+		const result = await asMaster(t).action(IMPORT, {
+			storageId,
+			targetNamespace: "global",
+			mode: "merge",
+			idempotencyKey: "k-none",
+		});
+		expect(result.imported.tasks).toBe(0);
+		expect(result.conflicts).toHaveLength(1);
+		expect(result.conflicts[0].path).toBe(tsk.filePath);
+		expect(result.conflicts[0].reason).toMatch(CODE);
 		expect(await allTasks(t)).toHaveLength(0);
 	});
 });

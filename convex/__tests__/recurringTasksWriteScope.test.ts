@@ -95,6 +95,7 @@ async function seedRecurringTask(
 ) {
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("recurringTasks", {
+			project: "p",
 			title: "seed recurring task",
 			assignedTo,
 			orgId,
@@ -116,6 +117,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 
 		await expect(
 			t.mutation(api.recurringTasks.create, {
+				project: "p",
 				title: "anon recurring",
 				assignedTo: "seat-x",
 				priority: "medium",
@@ -136,6 +138,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 
 		await expect(
 			tA.mutation(api.recurringTasks.create, {
+				project: "p",
 				title: "cross-org recurring",
 				assignedTo: "seat-b",
 				priority: "medium",
@@ -158,6 +161,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 		const seatId = await agentIdOf(t, "org-a", "seat-a");
 
 		const id = await tA.mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "org-a recurring",
 			assignedTo: "seat-a",
 			priority: "medium",
@@ -176,6 +180,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 		await seedFleetAgents(t, ["seat-x", "alpha"]);
 
 		const id = await tMaster.mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "master recurring",
 			assignedTo: "seat-x",
 			priority: "medium",

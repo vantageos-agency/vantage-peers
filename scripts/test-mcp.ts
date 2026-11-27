@@ -929,6 +929,7 @@ async function main() {
 		try {
 			const res = await client.callTool("create_recurring_task", {
 				title: "MCP test recurring",
+				project: "mcp-test",
 				assignedTo: "sigma",
 				priority: "low",
 				cronExpression: "0 0 * * *",

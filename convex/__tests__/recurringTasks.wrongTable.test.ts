@@ -50,6 +50,7 @@ const HINT =
 
 const newRecurringTask = (t: ReturnType<typeof createT>) =>
 	t.mutation(api.recurringTasks.create, {
+		project: "p",
 		title: "Probe recurring task",
 		assignedTo: "sigma",
 		priority: "medium",

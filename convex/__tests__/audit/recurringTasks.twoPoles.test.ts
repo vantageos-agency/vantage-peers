@@ -80,6 +80,7 @@ describe("recurringTasks:create — a registered agent of the caller's own org",
 	test("positive control: the human path (no createdBy) creates a schedule stamped with the member's org", async () => {
 		const t = await world();
 		const id = await asMember(t).mutation(api.recurringTasks.create, {
+			project: "p",
 			title: "h",
 			assignedTo: "sigma",
 			priority: "low",
@@ -104,6 +105,7 @@ describe("recurringTasks:create — a registered agent of the caller's own org",
 		let text = "";
 		try {
 			await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
+				project: "p",
 				title: "as-agent",
 				assignedTo: "sigma",
 				priority: "low",

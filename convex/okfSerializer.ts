@@ -280,6 +280,7 @@ export function serializeTask(entity: TaskDoc): SerializedFile {
 		assignedTo: entity.assignedTo,
 		priority: entity.priority,
 		status: entity.status,
+		project: entity.project,
 		missionId: entity.missionId ?? undefined,
 		dependsOn: entity.dependsOn,
 		createdBy: entity.createdBy,

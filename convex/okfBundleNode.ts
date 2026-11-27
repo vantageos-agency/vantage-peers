@@ -25,6 +25,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { taskProjectRefusal, trimmedProjectOrNull } from "./lib/taskProject";
 import { actionScopeArgs } from "./lib/actingOrg";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createHash } from "node:crypto";
@@ -899,6 +900,24 @@ interface ParsedTask {
 	priority: "urgent" | "high" | "medium" | "low";
 	status: "todo" | "in_progress" | "review" | "blocked" | "done";
 	createdBy: string;
+	/** The `project` frontmatter field of the entry, when it names one. */
+	project?: string;
+}
+
+/**
+ * The project an imported task is written under: the entry's own `project`
+ * frontmatter, else the project the target namespace names (`project/<slug>`).
+ * Any other namespace names none, and none is invented: `null` -> refused.
+ */
+export function importedTaskProject(
+	entryProject: string | undefined,
+	targetNamespace: string,
+): string | null {
+	const own = trimmedProjectOrNull(entryProject);
+	if (own !== null) return own;
+	return targetNamespace.startsWith("project/")
+		? trimmedProjectOrNull(targetNamespace.slice("project/".length))
+		: null;
 }
 type ParsedEntry = ParsedMemory | ParsedBriefing | ParsedTask;
 
@@ -951,6 +970,7 @@ function parseEntry(entry: BundleEntry): ParsedEntry | null {
 				? status
 				: "todo") as ParsedTask["status"],
 			createdBy: typeof fm.createdBy === "string" ? fm.createdBy : "sigma",
+			...(typeof fm.project === "string" ? { project: fm.project } : {}),
 		};
 	}
 	return null;
@@ -1132,6 +1152,23 @@ export const importOkfBundle = action({
 				}
 				out.imported.briefings++;
 			} else if (parsed.kind === "task") {
+				// A task is never written without a project, and none is invented: the
+				// entry's own `project` frontmatter, else the `project/<slug>` namespace.
+				// An entry that gets neither is NOT imported and is reported in
+				// `conflicts` under the TASK_PROJECT_REQUIRED code (dry-run included),
+				// so a legacy project-less row does not block the rest of the bundle
+				// (a restore of a tenant's own export) and is never silently dropped.
+				const project = importedTaskProject(
+					parsed.project,
+					args.targetNamespace,
+				);
+				if (project === null) {
+					out.conflicts.push({
+						path: entry.path,
+						reason: taskProjectRefusal("okfBundleNode:importOkfBundle"),
+					});
+					continue;
+				}
 				const existing = await findExistingIdByPaginating((cursor) =>
 					ctx.runQuery(internal.okfBundle._findTaskByTitleAndDescription, {
 						namespace: args.targetNamespace,
@@ -1152,6 +1189,7 @@ export const importOkfBundle = action({
 						assignedTo: parsed.assignedTo,
 						priority: parsed.priority,
 						status: parsed.status,
+						project,
 						createdBy: parsed.createdBy,
 						contentHash: okfContentHash(
 							`${parsed.title}\n${parsed.description ?? ""}`,

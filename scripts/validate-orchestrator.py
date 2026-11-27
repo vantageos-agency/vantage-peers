@@ -450,6 +450,7 @@ def run_tests(client: McpClient, orch: str):
     try:
         res = client.call_tool("create_recurring_task", {
             "title": f"[VALIDATOR] Test recurring for {orch}",
+            "project": "validator",
             "assignedTo": orch,
             "priority": "low",
             "cronExpression": "0 0 31 2 *",

@@ -170,6 +170,7 @@ describe("B. recurringTasks.create: createdBy is bound to the caller's roster", 
 		// credential and forwards the row through the fleet service account.
 		const aliceId = await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
+			project: "p",
 			...args("alice"),
 			verifiedActor: { agentId: aliceId, orgSlug: "org-a" },
 		});
