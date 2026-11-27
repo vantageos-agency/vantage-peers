@@ -75,6 +75,16 @@ function harness(
 	};
 }
 
+/**
+ * accept/update/settle_mandate act BY ID: a bearer that resolves no verified
+ * agent ID is refused, typed, before the door (unverifiedActorDenial, #1803). A
+ * success is therefore driven with a context that carries one.
+ */
+const VERIFIED_AGENT: OAuthContext = {
+	...LOCAL_STDIO_TRUST_CTX,
+	actor: { orgSlug: "ops", agentName: "beta", agentId: "agent-beta" },
+};
+
 const MANDATE_ID = "j57aaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 const row = (over: Record<string, unknown> = {}) => ({
@@ -156,7 +166,7 @@ describe("create_mandate", () => {
 
 describe("accept_mandate", () => {
 	it("declares its schema and answers structuredContent equal to its text", async () => {
-		const h = harness({ "mandates:accept": () => null });
+		const h = harness({ "mandates:accept": () => null }, VERIFIED_AGENT);
 		const res = await success(h, "accept_mandate", {
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "beta",
@@ -176,7 +186,7 @@ describe("accept_mandate", () => {
 			"mandates:accept": () => {
 				throw new Error("only the fulfiller may accept");
 			},
-		});
+		}, VERIFIED_AGENT);
 		const res = await h.tool("accept_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
@@ -188,7 +198,7 @@ describe("accept_mandate", () => {
 
 describe("update_mandate", () => {
 	it("declares its schema and answers structuredContent equal to its text", async () => {
-		const h = harness({ "mandates:update": () => null });
+		const h = harness({ "mandates:update": () => null }, VERIFIED_AGENT);
 		const res = await success(h, "update_mandate", {
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "beta",
@@ -210,7 +220,7 @@ describe("update_mandate", () => {
 			"mandates:update": () => {
 				throw new Error("only the fulfiller may update");
 			},
-		});
+		}, VERIFIED_AGENT);
 		const res = await h.tool("update_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
@@ -223,7 +233,7 @@ describe("update_mandate", () => {
 
 describe("settle_mandate", () => {
 	it("declares its schema and answers structuredContent equal to its text", async () => {
-		const h = harness({ "mandates:settle": () => null });
+		const h = harness({ "mandates:settle": () => null }, VERIFIED_AGENT);
 		const res = await success(h, "settle_mandate", {
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "alpha",
@@ -245,7 +255,7 @@ describe("settle_mandate", () => {
 			"mandates:settle": () => {
 				throw new Error("only the requester may settle");
 			},
-		});
+		}, VERIFIED_AGENT);
 		const res = await h.tool("settle_mandate").handler({
 			mandateId: MANDATE_ID,
 			callerOrchestrator: "gamma",
@@ -408,4 +418,32 @@ describe("list_mandates", () => {
 			error: { code: "invalid_cursor", message: expect.any(String) },
 		});
 	});
+});
+
+describe("accept_mandate, update_mandate, settle_mandate: the typed refusal before the door is kept", () => {
+	const calls: Array<[string, string, Record<string, unknown>]> = [
+		["accept_mandate", "mandates:accept", { callerOrchestrator: "beta" }],
+		[
+			"update_mandate",
+			"mandates:update",
+			{ callerOrchestrator: "beta", tokensCost: 1 },
+		],
+		[
+			"settle_mandate",
+			"mandates:settle",
+			{ callerOrchestrator: "alpha", finalCost: 1 },
+		],
+	];
+	for (const [tool, door, extra] of calls) {
+		it(`${tool}: no verified agent ID -> verified-actor-required, no door call, no structuredContent`, async () => {
+			const h = harness({ [door]: () => null });
+			const res = await h
+				.tool(tool)
+				.handler({ mandateId: MANDATE_ID, ...extra });
+			expect(res.isError).toBe(true);
+			expect(res.content[0].text).toContain("verified-actor-required");
+			expect(res.structuredContent).toBeUndefined();
+			expect(h.calls.map((c) => c.fn)).not.toContain(door);
+		});
+	}
 });
