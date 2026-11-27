@@ -10221,12 +10221,23 @@ export function registerTools(
 			try {
 				// Decode opaque cursor → createdBefore anchor (legacy paging.ts format).
 				// Invalid cursor surfaces as user-facing error (no crash).
+				// The door's own { time, id } nextCursor is forwarded to Convex verbatim
+				// (isBackendTimeIdCursor owns that shape); the legacy { createdBefore }
+				// token still anchors. Any other shape is not this tool's cursor and is
+				// refused, never read as "no cursor" (which restarts at page 1).
 				let createdBefore: number | undefined;
+				let convexCursor: string | undefined;
 				if (cursor !== undefined && cursor !== "") {
 					try {
-						const decoded = decodeCursor(cursor);
-						if (decoded && "createdBefore" in decoded) {
-							createdBefore = decoded.createdBefore;
+						if (isBackendTimeIdCursor(cursor)) {
+							convexCursor = cursor;
+						} else {
+							const decoded = decodeCursor(cursor);
+							if (decoded && "createdBefore" in decoded) {
+								createdBefore = decoded.createdBefore;
+							} else {
+								throw new Error("invalid cursor: not a list_bus cursor");
+							}
 						}
 					} catch (err: any) {
 						return invalidCursorResult(err);
@@ -10247,6 +10258,7 @@ export function registerTools(
 					status,
 					limit: effectiveLimit,
 					fields: fields ?? "full",
+					cursor: convexCursor,
 					createdBefore,
 					...doorScopeArgs("businessUnits:list", undefined),
 				});
@@ -10558,7 +10570,7 @@ export function registerTools(
 							if (decoded && "createdBefore" in decoded) {
 								createdBefore = decoded.createdBefore;
 							} else {
-								convexCursor = cursor;
+								throw new Error("invalid cursor: not a list_repo_mappings cursor");
 							}
 						}
 					} catch (err: unknown) {
