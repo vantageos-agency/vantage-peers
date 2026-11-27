@@ -93,6 +93,7 @@ import {
 	getMemoryServedOutputSchema,
 	getMessageServedOutputSchema,
 	getMissionServedOutputSchema,
+	getMandateServedOutputSchema,
 	getMissionTemplateServedOutputSchema,
 	getOwnerToolUsageServedOutputSchema,
 	getProfileServedOutputSchema,
@@ -103,6 +104,11 @@ import {
 	improvisationDigestServedOutputSchema,
 	instantiateTemplateIntoMissionServedOutputSchema,
 	linkIssueToPatternServedOutputSchema,
+	createMandateServedOutputSchema,
+	acceptMandateServedOutputSchema,
+	updateMandateServedOutputSchema,
+	settleMandateServedOutputSchema,
+	validateMandateSpendingServedOutputSchema,
 	listBlockedOnMeServedOutputSchema,
 	nextTaskServedOutputSchema,
 	reorderQueueServedOutputSchema,
@@ -113,6 +119,7 @@ import {
 	listFixPatternsServedOutputSchema,
 	listMemoriesServedOutputSchema,
 	listMessagesServedOutputSchema,
+	listMandatesServedOutputSchema,
 	listMissionsServedOutputSchema,
 	listPeersServedOutputSchema,
 	listRecurringTasksServedOutputSchema,
@@ -9410,6 +9417,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create mandate",
+			outputSchema: createMandateServedOutputSchema,
 		},
 		async ({
 			requestedBy,
@@ -9436,17 +9444,18 @@ export function registerTools(
 					mandateDocument,
 				});
 
+				const structured = {
+					mandateId,
+					requestedBy,
+					fulfilledBy,
+					service,
+					budget,
+				};
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ mandateId, requestedBy, fulfilledBy, service, budget },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9482,6 +9491,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Accept mandate",
+			outputSchema: acceptMandateServedOutputSchema,
 		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
@@ -9495,13 +9505,12 @@ export function registerTools(
 					...actorClaim(),
 				});
 
+				const structured = { mandateId, status: "accepted" };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ mandateId, status: "accepted" }, null, 2),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9539,6 +9548,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update mandate",
+			outputSchema: updateMandateServedOutputSchema,
 		},
 		async ({
 			mandateId,
@@ -9561,13 +9571,12 @@ export function registerTools(
 					...actorClaim(),
 				});
 
+				const structured = { mandateId, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ mandateId, updated: true }, null, 2),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9600,6 +9609,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Settle mandate",
+			outputSchema: settleMandateServedOutputSchema,
 		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
@@ -9614,17 +9624,12 @@ export function registerTools(
 					...actorClaim(),
 				});
 
+				const structured = { mandateId, status: "settled", finalCost };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ mandateId, status: "settled", finalCost },
-								null,
-								2,
-							),
-						},
+						{ type: "text", text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9657,6 +9662,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Validate mandate spending",
+			outputSchema: validateMandateSpendingServedOutputSchema,
 		},
 		async ({ mandateId, proposedAmount }) => {
 			const orgDenied = unresolvedOrgDenial("validate_mandate_spending");
@@ -9669,6 +9675,7 @@ export function registerTools(
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result as Record<string, unknown>,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9865,6 +9872,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List mandates",
+			outputSchema: listMandatesServedOutputSchema,
 		},
 		async ({ requestedBy, fulfilledBy, status, limit, fields, cursor }) => {
 			try {
@@ -9929,17 +9937,10 @@ export function registerTools(
 							}
 						: filteredMandates;
 
+				const capped = capPage(mandatesWithCursor, "list_mandates");
 				return {
-					content: [
-						{
-							type: "text",
-							text: capListResponseBytes(
-								mandatesWithCursor,
-								JSON.stringify(mandatesWithCursor, null, 2),
-								"list_mandates",
-							),
-						},
-					],
+					content: [{ type: "text", text: capped.text }],
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -13113,6 +13114,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get mandate",
+			outputSchema: getMandateServedOutputSchema,
 		},
 		async ({ mandateId }) => {
 			try {
@@ -13140,6 +13142,7 @@ export function registerTools(
 				}
 				return {
 					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					structuredContent: filtered as Record<string, unknown>,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
