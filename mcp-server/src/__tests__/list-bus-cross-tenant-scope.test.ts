@@ -268,9 +268,14 @@ describe("get_bu — same remap, single-row get counterpart", () => {
 
 		const handler = handlers.get("get_bu");
 		const result = await handler?.({ buId: BU_BETA_OTHER._id });
-		const parsed = parseResult(result);
-
-		expect(parsed).toBeNull();
+		// A foreign unit is answered exactly as an absent one: the not-found
+		// error, never the row, and no structuredContent.
+		expect(isErrorResult(result)).toBe(true);
+		expect((result as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+		expect(
+			(result as { content: Array<{ text: string }> }).content[0].text,
+		).toContain("Business unit not found");
+		expect(JSON.stringify(result)).not.toContain(BU_BETA_OTHER.name);
 	});
 
 	it("MASTER sees any BU", async () => {
