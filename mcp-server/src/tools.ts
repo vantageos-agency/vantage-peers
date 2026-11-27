@@ -150,6 +150,7 @@ import {
 	decodeCursor,
 	encodeCursor,
 	invalidCursorResult,
+	isBackendTimeIdCursor,
 	scopedPageContinuation,
 } from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
@@ -10536,18 +10537,22 @@ export function registerTools(
 			try {
 				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
 
-				// Hybrid cursor decode: supports old paging.ts format { createdBefore }
-				// for back-compat, and new opaque format { time, id } passed directly to Convex.
+				// Hybrid cursor decode: the door's own { time, id } nextCursor is passed
+				// to Convex verbatim (isBackendTimeIdCursor owns that shape), and the old
+				// paging.ts { createdBefore } format is kept for back-compat.
 				let createdBefore: number | undefined;
 				let convexCursor: string | undefined;
 				if (cursor !== undefined && cursor !== "") {
 					try {
-						const decoded = decodeCursor(cursor);
-						if (decoded && "createdBefore" in decoded) {
-							createdBefore = decoded.createdBefore;
-						} else {
-							// New-format cursor — pass directly to Convex
+						if (isBackendTimeIdCursor(cursor)) {
 							convexCursor = cursor;
+						} else {
+							const decoded = decodeCursor(cursor);
+							if (decoded && "createdBefore" in decoded) {
+								createdBefore = decoded.createdBefore;
+							} else {
+								convexCursor = cursor;
+							}
 						}
 					} catch (err: unknown) {
 						return invalidCursorResult(err);

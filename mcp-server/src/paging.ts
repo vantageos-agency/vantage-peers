@@ -162,6 +162,33 @@ export function decodeCursor(
 }
 
 /**
+ * True when `token` is a Convex-owned `{ time, id }` continuation cursor, the
+ * shape `githubRepoMapping:list` (and `businessUnits:list`) emit as nextCursor:
+ * `btoa(JSON.stringify({ time, id }))`, standard base64. That token is opaque to
+ * the MCP layer and is forwarded to the door VERBATIM; decodeCursor does not
+ * model it, so a tool that forwards such a cursor tests this FIRST. This is the
+ * one place that knows the shape (task k17egc72db260vvsg39qvvcnd18jx3w3).
+ */
+export function isBackendTimeIdCursor(token: string | null | undefined): boolean {
+	if (!token) return false;
+	try {
+		const parsed = JSON.parse(
+			Buffer.from(token, "base64").toString("utf8"),
+		) as unknown;
+		if (typeof parsed !== "object" || parsed === null) return false;
+		const p = parsed as Record<string, unknown>;
+		return (
+			typeof p.time === "number" &&
+			Number.isFinite(p.time) &&
+			typeof p.id === "string" &&
+			p.id.length > 0
+		);
+	} catch {
+		return false;
+	}
+}
+
+/**
  * The tool result for a cursor ARGUMENT that does not decode (task
  * k171rk9evy8yy48tfx765zqwk18hwdvh; resources/references/mcp-standard.md
  * C-11 (b), after SEP-1303): `isError: true`, and a `structuredContent` that
