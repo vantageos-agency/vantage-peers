@@ -1,6 +1,6 @@
 {
 	"name": "vantage-peers-mcp",
-	"version": "6.0.0",
+	"version": "7.0.0",
 	"description": "MCP server for multi-agent teams: persistent memory, agent messaging, time-tracked tasks, missions",
 	"type": "module",
 	"main": "./dist/server.js",

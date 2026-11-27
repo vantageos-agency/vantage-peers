@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-11-27
+
+A major release: the five Knowledge Base tools and the Clerk-JWT layer refuse what 6.0.0 accepted. This is a major release because a credential stops being accepted (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
+
+### Breaking
+
+- Cloud and Self-host: the five Knowledge Base tools (`store_document_chunked`, `soft_delete_document`, `claim_upload`, and `generate_upload_url` with and without `sha256`) refuse a bearer that is neither the master nor a Clerk session and has no verified organisation. The refusal is `RBAC_DENIED` with reason `verified-org-unresolved`, and no backend call is made (#1804). Master and Clerk-session callers are unchanged. Caller change: call the Knowledge Base tools with a bearer that carries a verified organisation. Cloud is unaffected: production has 0 bearers without an org slug (counted by sigma). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Self-host: `CLERK_DOMAIN` is now required by the Clerk-JWT layer, `whoami` and the org-admin token too, not only the service-account mint. An unset, empty or whitespace-only value is refused instead of defaulting to a dev Clerk instance (#1802). Upgrade note: set CLERK_DOMAIN before upgrading, or every Clerk JWT is refused. Cloud is unaffected: `CLERK_DOMAIN` is set on Railway. ([Self-host](README.md#self-host-a-separate-product); variable table in `docs/self-host/railway-template.md`)
+
+### Changed
+
+- Cloud and Self-host: the tools forward the caller's verified agent ID to the backend doors that take it, and refuse with a typed `RBAC_DENIED` before the door a caller with none where the door admits none (`accept_mandate`, `update_mandate`, `settle_mandate`; `debate_get_room` and `improvisation_digest` for a caller that is not a Clerk session). One shared producer builds every identity refusal (#1803). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `get_memory` forwards the caller's verified organisation to the backend door (#1804). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: the README and `docs/` state the 6.0.0 behaviours of `create_recurring_task`, `CLERK_DOMAIN` and `list_repo_mappings` (#1808). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Fixed
+
+- Cloud and Self-host: `list_bus` forwards the `{time,id}` `nextCursor` it emits, so its page 2 is reachable. `list_bus` and `list_repo_mappings` refuse a cursor of an unknown shape instead of silently restarting at page 1 (#1807). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [6.0.0] — 2026-11-27
 
 A major release: `create_recurring_task` requires `project`. This is a major release because a tool input changed (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.

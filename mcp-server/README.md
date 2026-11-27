@@ -333,7 +333,8 @@ _Applies to: Cloud and Self-host._
 
 - **Annotations.** Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. A tool marked read-only is checked against what its handler does.
 - **Paging.** Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor. `get_github_owner_bindings` takes `limit`, `cursor` and `unprovenCursor` and returns `nextCursor` and `unprovenNextCursor`.
-- **6.0.0 behaviours.** `create_recurring_task` requires `project`; an empty or blank one is refused (#1800). `list_repo_mappings` pages beyond the first are reachable with the `nextCursor` it returns (#1805), and an out-of-scope row is served with `orchestrator` absent and `outOfScope.reason` set. On Self-host, `CLERK_DOMAIN` is required for the service-account mint, with no default: an unset, empty or whitespace-only value is refused before any Clerk call (#1795); since #1802 (merged after 6.0.0, ships in the next release) Clerk JWT verification and `whoami` refuse it the same way.
+- **7.0.0 behaviours.** The five Knowledge Base tools refuse a bearer with no verified organisation unless it is the master or a Clerk session (#1804). `list_bus` pages beyond the first are reachable with the `nextCursor` it returns, and `list_bus` and `list_repo_mappings` refuse a cursor of an unknown shape instead of restarting at page 1 (#1807).
+- **6.0.0 behaviours.** `create_recurring_task` requires `project`; an empty or blank one is refused (#1800). `list_repo_mappings` pages beyond the first are reachable with the `nextCursor` it returns (#1805), and an out-of-scope row is served with `orchestrator` absent and `outOfScope.reason` set. On Self-host, `CLERK_DOMAIN` is required for the service-account mint, with no default: an unset, empty or whitespace-only value is refused before any Clerk call (#1795); since 7.0.0 (#1802) Clerk JWT verification and `whoami` refuse it the same way.
 - **Rows your scope removed.** `list_peers`, `list_tasks_by_mission` and `list_recurring_tasks` answer a bare array when nothing was filtered out, and `{ items, nextCursor?, scopeFiltered }` when your scope removed rows of your own organisation from the page (`scopeFiltered` is that count; another organisation's rows are never counted). `list_broadcast_status` reports `scopeFiltered` and `truncated` beside its receipts. The cursor is decided on the raw page, so a narrowed page still carries its cursor.
 - **List arguments.** Every list argument a client fills (for example `mark_as_read` `receiptIds`) accepts a JSON array or the same array sent as a JSON string. The status filters of `list_tasks`, `list_tasks_by_mission` and `list_missions` are published as an array of statuses; a single status, or an alias (`open`, `active`, `all`) on its own, is still accepted.
 - **Output schemas are open.** A tool's `outputSchema` allows fields added in a later release, so a client connected before an upgrade keeps validating the answers.
@@ -409,6 +410,15 @@ Before it serves anything, the server asks your backend for its contract manifes
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
 
 ## Release notes
+
+### 7.0.0
+
+_Applies to: Cloud and Self-host._ A major release: the five Knowledge Base tools and the Clerk-JWT layer refuse what 6.0.0 accepted.
+
+- Cloud and Self-host: `store_document_chunked`, `soft_delete_document`, `claim_upload` and `generate_upload_url` refuse a bearer that is neither the master nor a Clerk session and has no verified organisation (`RBAC_DENIED`, `verified-org-unresolved`, #1804). Upgrade note: `store_document_chunked`, `soft_delete_document`, `claim_upload` and `generate_upload_url` refuse a bearer with no verified organisation, so use a bearer that carries one. Cloud is unaffected: production has 0 bearers without an org slug.
+- Self-host: `CLERK_DOMAIN` must be set for Clerk JWT verification, `whoami` and the org-admin token too; an unset, empty or whitespace-only value is refused instead of defaulting to a dev Clerk instance (#1802). Upgrade note: set CLERK_DOMAIN before upgrading, or every Clerk JWT is refused. Cloud is unaffected: `CLERK_DOMAIN` is set on Railway.
+- Cloud and Self-host: tools forward the verified agent ID to the doors that take it and refuse typed, before the door, a caller with none where the door admits none (#1803); `get_memory` forwards the verified organisation (#1804).
+- Cloud and Self-host: `list_bus` forwards its `{time,id}` `nextCursor`; `list_bus` and `list_repo_mappings` refuse a cursor of an unknown shape instead of restarting at page 1 (#1807).
 
 ### 6.0.0
 
