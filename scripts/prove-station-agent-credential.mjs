@@ -50,7 +50,7 @@ const TAG = "[prove-station]";
 
 function requireEnv(name) {
 	const value = process.env[name];
-	if (!value) throw new Error(`Missing required env var: ${name}. Cannot proceed.`);
+	if (!value?.trim()) throw new Error(`Missing required env var: ${name}. Cannot proceed.`);
 	return value;
 }
 

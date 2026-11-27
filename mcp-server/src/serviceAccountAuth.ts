@@ -81,10 +81,11 @@ interface ServiceAccountConfig {
  * CLERK_DOMAIN has no default. A ticket minted with CLERK_SECRET_KEY must be
  * redeemed on the Frontend API of the SAME Clerk instance; a silent fallback
  * to another instance fails with `ticket_invalid_code`, which reads as an
- * outage. Refuses before any Clerk or network call.
+ * outage. Whitespace-only counts as unset and surrounding whitespace is
+ * trimmed. Refuses before any Clerk or network call.
  */
 function requireClerkDomain(): string {
-	const domain = process.env.CLERK_DOMAIN;
+	const domain = process.env.CLERK_DOMAIN?.trim();
 	if (!domain) {
 		throw new Error(
 			"CLERK_DOMAIN is not set: it must be the Frontend API origin of the Clerk instance that issued CLERK_SECRET_KEY (prod: https://clerk.vantagepeers.com). There is no default.",
