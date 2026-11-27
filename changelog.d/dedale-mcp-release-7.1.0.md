@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **`vantage-peers-mcp` 7.1.0 (minor), dated 2026-11-27.** `mcp-server/package.json` 7.0.0 -> 7.1.0. `mcp-server/CHANGELOG.md` and the README release notes carry #1810, #1812, #1814 and #1816 (Cloud and Self-host: 26 more tools declare an `outputSchema` and return `structuredContent`; a registration without an `outputSchema` is refused), #1813 and #1818 (Self-host: backend contract 34 -> 36, deploy the backend first; `get_mission_template` forwards the verified organisation to the template door) and #1815 (`get_issue` and `issue_stats` decide the master-only read before the door call). Minor under the Versioning rules: new fields only, no tool or argument removed, no text, success or error changed, no credential stops being accepted. `docs/self-host/railway-template.md` version rows, contract note and `/health` example, and the README structured-answers bullet updated. Task k17b8mtsk3dv6js9raqmpqn4yh8k04wm.
