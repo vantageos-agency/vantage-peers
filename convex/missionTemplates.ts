@@ -139,7 +139,6 @@ export const getByName = query({
 	},
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		// allow-local-identity: the roster arrives from the service account as an argument and is judged by the package's passesScopeFilter, not by a local compare.
 		// S-35: the caller's verified org, or failing that its own roster, is applied inside the read (tasks k177e1a9wfz01c1f0h4y4bgz3s8k11m6, k17edzy4wpq0ng4cbytgj8ev6n8k0hsd); a claimless read with neither is served unchanged.
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, "missionTemplates:getByName", {
