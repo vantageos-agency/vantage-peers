@@ -1,5 +1,5 @@
 import { requireProject } from "./lib/taskProject";
-import { sameOrg } from "@vantageos/cloud-identity";
+import { passesScopeFilter, sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -11,6 +11,7 @@ import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
 import {
 	isOrchestratorOnOrgRoster,
+	isServiceTransport,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
@@ -128,10 +129,17 @@ export const getByName = query({
 		// (R-54, S-35): the read applies that organisation's roster inside the read.
 		// Believed from the service account only (convex/lib/verifiedOrg.ts).
 		verifiedOrg: v.optional(verifiedOrgValidator),
+		// The roster of a non-master bearer the MCP could resolve NO organisation
+		// for (S-35, task k17edzy4wpq0ng4cbytgj8ev6n8k0hsd): the read admits the
+		// template when its creator is on this roster, by the package's one filter
+		// (`passesScopeFilter`, normalised label compare, same as the MCP's
+		// after-read `scopeFilterGet`). Believed from the service account only and
+		// ignored from anyone else; `verifiedOrg` wins when both are carried.
+		callerRoster: v.optional(v.array(v.string())),
 	},
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		// S-35: the caller's verified org is applied inside the read (task k177e1a9wfz01c1f0h4y4bgz3s8k11m6); a claimless master read is kept until the MCP forwards verifiedOrg.
+		// S-35: the caller's verified org, or failing that its own roster, is applied inside the read (tasks k177e1a9wfz01c1f0h4y4bgz3s8k11m6, k17edzy4wpq0ng4cbytgj8ev6n8k0hsd); a claimless read with neither is served unchanged.
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, "missionTemplates:getByName", {
 			alsoRefusePreOrg: true,
@@ -154,6 +162,24 @@ export const getByName = query({
 			args.verifiedOrg !== undefined &&
 			!scope.fleetWide &&
 			!isOrchestratorOnOrgRoster(scope, template.createdBy)
+		) {
+			return null;
+		}
+		// A presented roster counts for the service-account transport only, and only
+		// when no organisation was verified (the verified org's roster decided above).
+		if (
+			args.verifiedOrg === undefined &&
+			args.callerRoster !== undefined &&
+			isServiceTransport(transportScope) &&
+			!passesScopeFilter(
+				{
+					scope: "member",
+					fromAllowList: args.callerRoster,
+					namespaceReadPrefixes: [],
+					namespaceWritePrefixes: [],
+				},
+				{ createdBy: template.createdBy },
+			)
 		) {
 			return null;
 		}

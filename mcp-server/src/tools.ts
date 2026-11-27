@@ -12042,11 +12042,22 @@ export function registerTools(
 		async ({ name }) => {
 			try {
 				// S3.1.C3 — scope-aware filter replaces guardMasterOnly.
+				// S-35: with a verified org the door applies that org's roster inside the
+				// read; a non-master bearer with no resolvable org presents its OWN roster
+				// (`callerRoster`) and the door applies it the same way (task
+				// k17edzy4wpq0ng4cbytgj8ev6n8k0hsd). The master presents none.
+				const templateScope = doorScopeArgs("missionTemplates:getByName", undefined);
+				const rosterScope =
+					templateScope.verifiedOrg === undefined &&
+					oauthCtx !== undefined &&
+					!isMasterScope(oauthCtx)
+						? { callerRoster: [...oauthCtx.fromAllowList] }
+						: {};
 				const template = await convex.query(
 					"missionTemplates:getByName" as any,
-					{ name, ...doorScopeArgs("missionTemplates:getByName", undefined) },
+					{ name, ...templateScope, ...rosterScope },
 				);
-				// S-35: the door is master-only but members see their own templates through this filter — scoping it inside the read needs a per-tenant door (sigma), kept after-read until then.
+				// The after-read filter stays as the second check on what the door returned.
 				const filteredTemplate = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					template as any,
