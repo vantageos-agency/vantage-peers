@@ -193,9 +193,9 @@ Correspondance exacte ou hiérarchique : `project/<client-org>/sub` passe si le 
 
 Layer 2.5 in `bearerAuthMiddleware` verifies the Clerk JWT against the JWKS at `CLERK_DOMAIN/.well-known/jwks.json` (10-min in-process cache) and populates the above context. `CLERK_DOMAIN` is required and has no default: unset or blank, the layer answers 401 `CLERK_DOMAIN_NOT_CONFIGURED` and fetches no key set. The Convex layer enforces the same boundary via `memoriesScoped.ts` (`assertNamespaceAllowed`). Cross-tenant reads and writes emit `AUTH_NAMESPACE_DENIED`. Unregistered or inactive orgs are also fail-closed with `AUTH_NAMESPACE_DENIED`.
 
-`CLERK_DOMAIN` (6.0.0, #1795): required for the service-account mint, no default. An unset, empty or whitespace-only value is refused before any Clerk call. Since #1802 (merged after 6.0.0, ships in the next release) the Clerk-JWT layer, `whoami` and the org-admin token refuse it the same way.
+`CLERK_DOMAIN` (6.0.0, #1795): required for the service-account mint, no default. An unset, empty or whitespace-only value is refused before any Clerk call. Since 7.0.0 (#1802) the Clerk-JWT layer, `whoami` and the org-admin token refuse it the same way.
 
-**FR — `CLERK_DOMAIN` (6.0.0, #1795) : requis pour le mint du service-account, sans valeur par défaut. Une valeur absente, vide ou faite d'espaces est refusée avant tout appel Clerk. Depuis #1802 (fusionnée après 6.0.0, livrée dans la prochaine version), la couche JWT Clerk, `whoami` et le jeton org-admin la refusent de la même façon.**
+**FR — `CLERK_DOMAIN` (6.0.0, #1795) : requis pour le mint du service-account, sans valeur par défaut. Une valeur absente, vide ou faite d'espaces est refusée avant tout appel Clerk. Depuis 7.0.0 (#1802), la couche JWT Clerk, `whoami` et le jeton org-admin la refusent de la même façon.**
 
 ---
 
