@@ -420,3 +420,79 @@ describe("kbIngest.ts: the master is refused before the door where it would be s
 		expect(args).not.toHaveProperty("verifiedOrg");
 	});
 });
+
+// ── 1b. the other ui:// primitives: the agent ID reaches memories:listMemories only ──
+//
+// The resource fetcher is the wrapped client (withVerifiedActor), the same one a tool call
+// uses, so `verifiedActor` is added exactly to the doors in VERIFIED_ACTOR_DOORS. Of the
+// eight doors the primitives read, only memories:listMemories is one. Each read below must
+// reach its door (fail-closed: a door never called is a failure, not a pass) and carry no
+// agent ID, for a seat and for a master that both hold one; memory-quote is the positive
+// control in the same loop.
+const UI_MASTER_AGENT: OAuthContext = { ...MASTER_AGENT };
+const UI_READS: Array<{ uri: string; door: string; actor: boolean }> = [
+	{ uri: "ui://vp/v1/briefing-note", door: "briefingNotes:list", actor: false },
+	{ uri: `ui://vp/v1/briefing-note?noteId=${ID}`, door: "briefingNotes:get", actor: false },
+	{ uri: "ui://vp/v1/diary-entry", door: "diary:list", actor: false },
+	{
+		uri: "ui://vp/v1/diary-entry?date=2026-11-28&orchestrator=clio",
+		door: "diary:get",
+		actor: false,
+	},
+	{ uri: "ui://vp/v1/messages-feed", door: "messages:listMessages", actor: false },
+	{ uri: "ui://vp/v1/mission-timeline", door: "missions:list", actor: false },
+	{ uri: "ui://vp/v1/tasks-table", door: "tasks:list", actor: false },
+	{
+		uri: "ui://vp/v1/memory-quote?namespace=orchestrator%2Fclio",
+		door: "memories:listMemories",
+		actor: true,
+	},
+];
+
+async function readUi(ctx: OAuthContext, uri: string) {
+	const calls: Call[] = [];
+	const fake = {
+		query: async (name: string, args: Record<string, unknown>) => {
+			calls.push({ name, args });
+			return { value: [], continueCursor: null, isDone: true, page: [] };
+		},
+	} as unknown as UiResourceConvexClient;
+	const server = new McpServer({ name: "t", version: "0.0.0" });
+	const master = ctx.isMaster;
+	registerUiResources(server, fake, ctx, {
+		master,
+		callerIdentities: master ? undefined : ctx.fromAllowList,
+	});
+	const [ct, st] = InMemoryTransport.createLinkedPair();
+	const client = new Client({ name: "c", version: "0.0.0" });
+	await Promise.all([server.connect(st), client.connect(ct)]);
+	try {
+		await client.readResource({ uri });
+	} catch {
+		// a primitive that renders an error still made its door call; the assertion below
+		// is on the call, never on the rendering
+	} finally {
+		await client.close();
+	}
+	return calls;
+}
+
+describe("ui:// primitives: the wrapped fetcher adds the agent ID to VERIFIED_ACTOR_DOORS only", () => {
+	for (const [label, ctx] of [
+		["a seat with an agent ID", UI_SEAT],
+		["a master holding an agent ID", UI_MASTER_AGENT],
+	] as const) {
+		for (const r of UI_READS) {
+			it(`${label}: ${r.door} ${r.actor ? "receives" : "receives no"} verifiedActor`, async () => {
+				const calls = await readUi(ctx, r.uri);
+				const c = calls.find((x) => x.name === r.door);
+				expect(
+					c,
+					`${r.uri} never called ${r.door}; calls: ${calls.map((x) => x.name).join(", ")}`,
+				).toBeDefined();
+				if (r.actor) expect(c?.args.verifiedActor).toBeDefined();
+				else expect(c?.args.verifiedActor).toBeUndefined();
+			});
+		}
+	}
+});
