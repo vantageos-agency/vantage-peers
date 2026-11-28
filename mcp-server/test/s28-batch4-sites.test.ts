@@ -432,14 +432,22 @@ describe("kbIngest.ts: the master is refused before the door where it would be s
 const UI_MASTER_AGENT: OAuthContext = { ...MASTER_AGENT };
 const UI_READS: Array<{ uri: string; door: string; actor: boolean }> = [
 	{ uri: "ui://vp/v1/briefing-note", door: "briefingNotes:list", actor: false },
-	{ uri: `ui://vp/v1/briefing-note?noteId=${ID}`, door: "briefingNotes:get", actor: false },
+	{
+		uri: `ui://vp/v1/briefing-note?noteId=${ID}`,
+		door: "briefingNotes:get",
+		actor: false,
+	},
 	{ uri: "ui://vp/v1/diary-entry", door: "diary:list", actor: false },
 	{
 		uri: "ui://vp/v1/diary-entry?date=2026-11-28&orchestrator=clio",
 		door: "diary:get",
 		actor: false,
 	},
-	{ uri: "ui://vp/v1/messages-feed", door: "messages:listMessages", actor: false },
+	{
+		uri: "ui://vp/v1/messages-feed",
+		door: "messages:listMessages",
+		actor: false,
+	},
 	{ uri: "ui://vp/v1/mission-timeline", door: "missions:list", actor: false },
 	{ uri: "ui://vp/v1/tasks-table", door: "tasks:list", actor: false },
 	{

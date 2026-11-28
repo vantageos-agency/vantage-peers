@@ -128,7 +128,6 @@ export function uiResourceDoorClaim(
 	return "denied" in resolved ? {} : resolved.args;
 }
 
-
 export function registerUiResources(
 	server: McpServer,
 	rawConvex: UiResourceConvexClient,
@@ -175,10 +174,13 @@ export function registerUiResources(
 				// wrapped client (withVerifiedActor, as for a tool call), for the
 				// doors in VERIFIED_ACTOR_DOORS only.
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				return convex.query(functionName as any, {
-					...args,
-					...uiResourceDoorClaim(ctx, functionName),
-				} as never);
+				return convex.query(
+					functionName as any,
+					{
+						...args,
+						...uiResourceDoorClaim(ctx, functionName),
+					} as never,
+				);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
 			// (server-http.ts) from the verified oauthCtx, as before the extraction.
