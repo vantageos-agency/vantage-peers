@@ -92,7 +92,11 @@ export function presentedRosterAdmits(
 	if (verifiedOrg !== undefined || presented === undefined) return true;
 	if (!isServiceTransport(transportScope)) return true;
 	return passesScopeFilter(
-		{ fromAllowList: presented, namespaceReadPrefixes: [] },
+		{
+			fromAllowList: presented,
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+		},
 		row,
 	);
 }
