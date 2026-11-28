@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **Repository gates (VantagePeers Cloud and Self-host): the pytest gate no longer carries a test file that skips as a whole (task k17b59y0vffz6ns5qxn5bk7sz58jxrvn).** `tests/hooks/test_strip_claude_from_pr.py` specified a `strip-claude-from-pr.py` hook that was never built here: an `AUDIT_LOG` attribute, a Co-Authored-By rewrite, and a top-level `decision: allow` output that the harness does not accept (catalogue hook 1.0.1 answers with `hookSpecificOutput`). Its module-level `skipif` skipped all 15 tests on every run, so a failing assertion added to it left the gate green. The hook is not in `.claude/hooks/` and is not wired in `.claude/settings.json`; the property it guarded (no Claude attribution in a PR) is enforced by the wired `enforce-no-claude-trailer.py`. The file is removed; no test file under `tests/` now skips as a whole.
