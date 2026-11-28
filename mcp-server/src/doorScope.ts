@@ -108,6 +108,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 		verifiedPerson: true,
 		verifiedOrg: "unless-person",
 	},
+	"briefingNotes:update": { verifiedOrg: "always" },
 	"briefingNotes:get": { verifiedOrg: "always" },
 	"briefingNotes:list": { verifiedOrg: "always" },
 	"briefingNotes:searchBriefingNotesByKeyword": { verifiedOrg: "always" },

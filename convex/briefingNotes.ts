@@ -1147,6 +1147,10 @@ export const update = mutation({
 		callerOrchestrator: v.optional(creatorValidator),
 		// Proof of WHO callerOrchestrator is (see `create`).
 		verifiedActor: v.optional(verifiedActorValidator),
+		// Transport-verified org of a service-account bearer (see `create`): the
+		// write then runs under that org's member scope, so the note is reachable
+		// only when it belongs to the verified org. Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		title: v.optional(v.string()),
 		topic: v.optional(v.string()),
 		participants: v.optional(v.array(v.string())),
@@ -1161,6 +1165,7 @@ export const update = mutation({
 			noteId,
 			callerOrchestrator,
 			verifiedActor,
+			verifiedOrg,
 			...fields
 		} = args;
 
@@ -1177,7 +1182,13 @@ export const update = mutation({
 		// deleteMessage above): an anonymous caller must get RBAC_DENIED, never
 		// "BriefingNote ... not found" — a get-then-scope order lets noteId
 		// existence act as an unauthenticated existence oracle.
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			verifiedOrg,
+			"briefingNotes:update",
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update briefing note ${noteId} — ${JSON.stringify({ orgSlug: null })}`,
@@ -1222,6 +1233,8 @@ export const update = mutation({
 				callerOrchestrator,
 				undefined,
 				verifiedActor,
+				undefined,
+				{ proof: verifiedOrg, door: "briefingNotes:update" },
 			);
 			callerActorId = caller.callerActorId;
 			actor = actingNameOf(caller, callerOrchestrator);
