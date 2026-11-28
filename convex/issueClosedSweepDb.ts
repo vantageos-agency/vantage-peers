@@ -13,6 +13,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
+import { buildIssueClosedNote } from "./errorMonitorAutoResolveNote";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,17 +69,14 @@ export const cascadeCloseMission = internalMutation({
 				);
 				await ctx.db.patch(task._id, {
 					status: "done" as const,
-					// T1 — hardcoded, consistent with the other four
-					// automated-success-close sites in convex/tasks.ts. This
-					// cron closes tasks whose GH issue was closed externally,
-					// which is a success signal (the work is considered
-					// resolved), never a caller-picked outcome.
-					completionOutcome: "succeeded" as const,
+					// No completionOutcome: the issue was closed outside VP and VP
+					// verified nothing, so no "succeeded" is asserted (operator
+					// ruling 2026-11-28).
 					completedAt: now,
 					updatedAt: now,
 					// Leaving the open set clears the explicit queue position.
 					queueRank: undefined,
-					completionNote: `issue-closed-externally: GH issue ${args.issueRef} was closed outside VP. Auto-closed by issueClosedSweep cron.`,
+					completionNote: `issue-closed-externally: ${buildIssueClosedNote(args.issueRef, "someone outside VP")}`,
 					...(closedSegmentsOnCascade !== undefined
 						? { workSegments: closedSegmentsOnCascade }
 						: {}),

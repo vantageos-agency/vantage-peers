@@ -2,6 +2,13 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
+import { buildAutoResolveNote } from "./errorMonitorAutoResolveNote";
+import {
+	DEPLOY_POLL_CAP,
+	FAILURE_CODE_RE,
+	FAILURE_DEPLOYMENT_RE,
+	FAILURE_STAGE_RE,
+} from "./errorMonitorHealth";
 import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
@@ -317,7 +324,146 @@ export const listActiveDeployments = internalQuery({
 		return await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_active", (q) => q.eq("active", true))
-			.take(50);
+			// One row beyond the poll cap: the caller can SEE that deployments
+			// beyond the cap exist and record the overflow instead of dropping it.
+			.take(DEPLOY_POLL_CAP + 1);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Monitor health — durable record of every stop of the poll/issue/resolve loop
+// ─────────────────────────────────────────────────────────────────────────────
+// Rows live in `errorMonitorConfig` (fleet-internal key/value, no tenant
+// column, no schema change):
+//   monitorFailure:<deployment>:<code>  value [deployment, stage, count]  updatedAt = last occurrence
+//   monitorPollOk:<deployment>          value [deployment]                updatedAt = last clean poll
+// The record carries codes and names only — never a secret, an exception
+// message, or a value taken from the logs.
+
+const MONITOR_FAILURE_PREFIX = "monitorFailure:";
+const MONITOR_POLL_OK_PREFIX = "monitorPollOk:";
+const MONITOR_HEALTH_READ_CAP = 500;
+
+export const recordMonitorFailure = internalMutation({
+	args: {
+		deployment: v.string(),
+		stage: v.string(),
+		code: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// Closed patterns: a caller cannot smuggle free text into the record.
+		if (
+			!FAILURE_CODE_RE.test(args.code) ||
+			!FAILURE_STAGE_RE.test(args.stage) ||
+			!FAILURE_DEPLOYMENT_RE.test(args.deployment)
+		) {
+			throw new ConvexError(
+				"MONITOR_FAILURE_INVALID: code, stage and deployment must match their closed patterns",
+			);
+		}
+		const key = `${MONITOR_FAILURE_PREFIX}${args.deployment}:${args.code}`;
+		const now = Date.now();
+		const existing = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) => q.eq("key", key))
+			.unique();
+		if (existing) {
+			const prior = Number.parseInt(existing.value[2] ?? "0", 10);
+			await ctx.db.patch(existing._id, {
+				value: [
+					args.deployment,
+					args.stage,
+					String((Number.isFinite(prior) ? prior : 0) + 1),
+				],
+				updatedAt: now,
+			});
+		} else {
+			await ctx.db.insert("errorMonitorConfig", {
+				key,
+				value: [args.deployment, args.stage, "1"],
+				updatedAt: now,
+			});
+		}
+		return null;
+	},
+});
+
+export const recordPollOk = internalMutation({
+	args: { deployment: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (!FAILURE_DEPLOYMENT_RE.test(args.deployment)) {
+			throw new ConvexError(
+				"MONITOR_FAILURE_INVALID: deployment must match its closed pattern",
+			);
+		}
+		const key = `${MONITOR_POLL_OK_PREFIX}${args.deployment}`;
+		const existing = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) => q.eq("key", key))
+			.unique();
+		if (existing) {
+			await ctx.db.patch(existing._id, { updatedAt: Date.now() });
+		} else {
+			await ctx.db.insert("errorMonitorConfig", {
+				key,
+				value: [args.deployment],
+				updatedAt: Date.now(),
+			});
+		}
+		return null;
+	},
+});
+
+export const listMonitorHealth = internalQuery({
+	args: {},
+	returns: v.object({
+		failures: v.array(
+			v.object({
+				deployment: v.string(),
+				stage: v.string(),
+				code: v.string(),
+				count: v.number(),
+				at: v.number(),
+			}),
+		),
+		pollOk: v.array(
+			v.object({ deployment: v.string(), at: v.number() }),
+		),
+	}),
+	handler: async (ctx) => {
+		// ';' is the character after ':' — the half-open range is the prefix.
+		const failureRows = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) =>
+				q.gte("key", MONITOR_FAILURE_PREFIX).lt("key", "monitorFailure;"),
+			)
+			.take(MONITOR_HEALTH_READ_CAP);
+		const okRows = await ctx.db
+			.query("errorMonitorConfig")
+			.withIndex("by_key", (q) =>
+				q.gte("key", MONITOR_POLL_OK_PREFIX).lt("key", "monitorPollOk;"),
+			)
+			.take(MONITOR_HEALTH_READ_CAP);
+		return {
+			failures: failureRows.map((r) => {
+				const count = Number.parseInt(r.value[2] ?? "1", 10);
+				return {
+					deployment: r.value[0] ?? "unknown",
+					stage: r.value[1] ?? "unknown",
+					code: r.key.slice(
+						r.key.lastIndexOf(":") + 1,
+					),
+					count: Number.isFinite(count) ? count : 1,
+					at: r.updatedAt,
+				};
+			}),
+			pollOk: okRows.map((r) => ({
+				deployment: r.value[0] ?? "unknown",
+				at: r.updatedAt,
+			})),
+		};
 	},
 });
 
@@ -435,10 +581,6 @@ export const listStaleAutoIrp = internalQuery({
 // so it can be called from both the action and from unit tests without loading
 // the Node.js runtime.
 
-const AUTO_RESOLVE_NOTE =
-	"Auto-resolved — error stopped recurring (no occurrences in 24h, no PR opened). " +
-	"Closing to keep queues clean. Re-open if it returns.";
-
 export const resolveStaleIrpMission = internalMutation({
 	args: {
 		errorLogId: v.id("errorLogs"),
@@ -466,6 +608,8 @@ export const resolveStaleIrpMission = internalMutation({
 
 		const allOpenTasks = [...todoTasks, ...inProgressTasks];
 		const now = Date.now();
+		const errorLog = await ctx.db.get(args.errorLogId);
+		const note = buildAutoResolveNote(errorLog?.lastSeen ?? now);
 
 		for (const task of allOpenTasks) {
 			const closedSegmentsOnAutoResolve = closeTrailingSegmentOnExit(
@@ -476,11 +620,10 @@ export const resolveStaleIrpMission = internalMutation({
 			);
 			await ctx.db.patch(task._id, {
 				status: "done",
-				// T1 — hardcoded; this auto-resolver only fires on a confirmed
-				// resolution signal (matches the other automated-success-close
-				// sites), never a caller-picked outcome.
-				completionOutcome: "succeeded",
-				completionNote: AUTO_RESOLVE_NOTE,
+				// No completionOutcome: an error that merely stopped recurring has
+				// not been shown to be fixed, so no "succeeded" is asserted
+				// (operator ruling 2026-11-28). The note states what was observed.
+				completionNote: note,
 				completedAt: now,
 				updatedAt: now,
 				// Leaving the open set clears the explicit queue position.

@@ -12,6 +12,8 @@ import {
 } from "./errorMonitorFilters";
 import { resolveFunctionVisibility } from "./errorMonitorFunctionVisibility";
 import { computeGroupKey } from "./errorMonitorGroupKey";
+import { DEPLOY_POLL_CAP, reportMonitorFailure } from "./errorMonitorHealth";
+import { shapeIssue } from "./errorMonitorIssueShape";
 import {
 	assertKillSwitchHealth,
 	isKillSwitchActive,
@@ -63,11 +65,9 @@ async function checkLinkedIssueOpen(
 		if (data.state === "open") return "open";
 		if (data.state === "closed") return "closed";
 		return "error";
-	} catch (err) {
-		console.error(
-			`[ErrorMonitor] Exception checking issue #${issueNumber} open state:`,
-			err,
-		);
+	} catch {
+		// The thrown message is not logged (it can carry request detail). The
+		// caller records ISSUE_OPEN_CHECK_FAILED for the "error" outcome.
 		return "error";
 	}
 }
@@ -107,19 +107,10 @@ async function commentOnExistingIssue(
 				body: JSON.stringify({ body }),
 			},
 		);
-		if (!resp.ok) {
-			const text = await resp.text();
-			console.error(
-				`[ErrorMonitor] Failed to comment on existing issue #${issueNumber}: ${resp.status} — ${text}`,
-			);
-			return false;
-		}
-		return true;
-	} catch (err) {
-		console.error(
-			`[ErrorMonitor] Exception commenting on existing issue #${issueNumber}:`,
-			err,
-		);
+		// The caller records ISSUE_COMMENT_FAILED on false; neither the
+		// response text nor a thrown message is logged.
+		return resp.ok;
+	} catch {
 		return false;
 	}
 }
@@ -151,9 +142,11 @@ export const createGitHubIssue = internalAction({
 		// call from upsertError bypassed that guard, letting #632 fire despite
 		// AUTO_IRP_PAUSED=true on prod.
 		if (isKillSwitchActive()) {
-			console.log(
-				"[createGitHubIssue] Skipped — AUTO_IRP_PAUSED env var is 'true'.",
-			);
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:kill-switch",
+				code: "KILL_SWITCH_ACTIVE",
+			});
 			return null;
 		}
 		// Day 128 hardening (issue #1088, Bug 1) — belt-and-suspenders guard
@@ -164,9 +157,11 @@ export const createGitHubIssue = internalAction({
 		// is caught here too. See errorMonitorDeployWindow.ts for the
 		// non-forgeable-signal rationale.
 		if (isDeployWindowActive(Date.now())) {
-			console.log(
-				`[createGitHubIssue] Skipped — DEPLOY_WINDOW_UNTIL_MS is active for ${args.deployment}.`,
-			);
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:deploy-window",
+				code: "DEPLOY_WINDOW_SUPPRESSED",
+			});
 			return null;
 		}
 		// D90 hardening — transient retry-class classification. A "Server Error
@@ -180,17 +175,21 @@ export const createGitHubIssue = internalAction({
 		}
 		const token = process.env.GITHUB_TOKEN;
 		if (!token) {
-			console.warn(
-				"[ErrorMonitor] GITHUB_TOKEN not set — skipping issue creation",
-			);
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:token",
+				code: "GITHUB_TOKEN_MISSING",
+			});
 			return null;
 		}
 
 		const [owner, repo] = args.githubRepo.split("/");
 		if (!owner || !repo) {
-			console.warn(
-				`[ErrorMonitor] Invalid githubRepo format "${args.githubRepo}" — expected "owner/repo"`,
-			);
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:repo",
+				code: "GITHUB_REPO_INVALID",
+			});
 			return null;
 		}
 
@@ -204,6 +203,13 @@ export const createGitHubIssue = internalAction({
 		const errorLog = await ctx.runQuery(internal.errorMonitor.getErrorLogById, {
 			errorId: args.errorId,
 		});
+		if (errorLog === null) {
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:row",
+				code: "ERRORLOG_ROW_MISSING",
+			});
+		}
 		if (errorLog?.issueNumber != null) {
 			const state = await checkLinkedIssueOpen(
 				owner,
@@ -211,6 +217,13 @@ export const createGitHubIssue = internalAction({
 				errorLog.issueNumber,
 				token,
 			);
+			if (state === "error") {
+				await reportMonitorFailure(ctx, {
+					deployment: args.deployment,
+					stage: "issue:open-check",
+					code: "ISSUE_OPEN_CHECK_FAILED",
+				});
+			}
 			if (state === "open") {
 				const commented = await commentOnExistingIssue(
 					owner,
@@ -222,6 +235,11 @@ export const createGitHubIssue = internalAction({
 				if (commented) {
 					return null;
 				}
+				await reportMonitorFailure(ctx, {
+					deployment: args.deployment,
+					stage: "issue:comment",
+					code: "ISSUE_COMMENT_FAILED",
+				});
 				// The comment did not demonstrably land (rate limit, 403 on a
 				// locked issue, transient 5xx, or a thrown fetch) — fall
 				// through and file a new issue rather than let the
@@ -233,30 +251,27 @@ export const createGitHubIssue = internalAction({
 			// distinct-new-error path below.
 		}
 
-		const body = [
-			"## Auto-detected Error",
-			"",
-			`**Deployment:** ${args.deployment}`,
-			`**Function:** \`${args.functionName}\``,
-			`**Detected:** ${new Date().toISOString()}`,
-			"",
-			"### Error Message",
-			"```",
-			args.errorMessage,
-			"```",
-			"",
-			"### Stack Trace",
-			"```",
-			args.stackTrace.slice(0, 3000),
-			"```",
-			"",
-			"---",
-			`*Auto-created by VantagePeers Error Monitor. Orchestrator: ${args.orchestrator.charAt(0).toUpperCase() + args.orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}*`,
-		].join("\n");
+		// SHAPE ONLY on the public issue (operator ruling 2026-11-28): function,
+		// error class (+ code), deployment, first/last seen, count, throw site.
+		// The raw message and stack stay in the private errorLogs row.
+		const now = new Date();
+		const shaped = shapeIssue({
+			functionNames: args.functionName.split(", "),
+			errorMessage: args.errorMessage,
+			stackTrace: args.stackTrace,
+			deployment: args.deployment,
+			firstSeen: errorLog?.firstSeen ?? now.getTime(),
+			lastSeen: errorLog?.lastSeen ?? now.getTime(),
+			count: errorLog?.count,
+			titlePrefix: args.recurringEscalation
+				? RECURRING_ESCALATION_TITLE_PREFIX
+				: undefined,
+			footer: `*Auto-created by VantagePeers Error Monitor. Orchestrator: ${args.orchestrator.charAt(0).toUpperCase() + args.orchestrator.slice(1)} — VantageOS Team | ${now.toISOString().split("T")[0]}*`,
+		});
 
-		const resp = await fetch(
-			`https://api.github.com/repos/${owner}/${repo}/issues`,
-			{
+		let resp: Response;
+		try {
+			resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${token}`,
@@ -265,29 +280,65 @@ export const createGitHubIssue = internalAction({
 					"User-Agent": "vantagepeers-bot/1.0",
 				},
 				body: JSON.stringify({
-					title: args.recurringEscalation
-						? `${RECURRING_ESCALATION_TITLE_PREFIX} [Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`
-						: `[Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`,
-					body,
+					title: shaped.title,
+					body: shaped.body,
 					labels: args.recurringEscalation
 						? ["bug", "auto-detected", "recurring-24h"]
 						: ["bug", "auto-detected"],
 				}),
-			},
-		);
+			});
+		} catch {
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:create",
+				code: "ISSUE_CREATE_THROWN",
+			});
+			return null;
+		}
 
-		if (resp.ok) {
-			const issue = (await resp.json()) as { number: number };
+		if (!resp.ok) {
+			// Status only: the response text is never logged or recorded.
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:create",
+				code: `ISSUE_CREATE_HTTP_${resp.status}`,
+			});
+			return null;
+		}
+
+		let issueNumber: unknown;
+		try {
+			issueNumber = ((await resp.json()) as { number?: unknown }).number;
+		} catch {
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:create",
+				code: "ISSUE_RESPONSE_PARSE_FAILED",
+			});
+			return null;
+		}
+		if (typeof issueNumber !== "number" || !Number.isFinite(issueNumber)) {
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:create",
+				code: "ISSUE_NUMBER_MISSING",
+			});
+			return null;
+		}
+		try {
 			await ctx.runMutation(internal.errorMonitor.linkIssue, {
 				errorId: args.errorId,
-				issueNumber: issue.number,
+				issueNumber,
 				githubRepo: args.githubRepo,
 			});
-		} else {
-			const text = await resp.text();
-			console.error(
-				`[ErrorMonitor] GitHub issue creation failed: ${resp.status} — ${text}`,
-			);
+		} catch {
+			// The issue exists on GitHub but is not linked to its row: the next
+			// threshold crossing would file a duplicate. Recorded, not silent.
+			await reportMonitorFailure(ctx, {
+				deployment: args.deployment,
+				stage: "issue:link",
+				code: "ISSUE_LINK_FAILED",
+			});
 		}
 
 		return null;
@@ -309,17 +360,30 @@ export const pollDeploymentLogs = internalAction({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// Every stop of this poll is recorded (console.error + durable row) by
+		// `reportMonitorFailure`; none returns silently. Operator ruling 2026-11-28.
+		let pollFailed = false;
+		const report = async (stage: string, code: string): Promise<void> => {
+			pollFailed = true;
+			await reportMonitorFailure(ctx, {
+				deployment: args.deploymentName,
+				stage,
+				code,
+			});
+		};
+
 		const deployKey = process.env[args.deployKeyEnvVar];
 		if (!deployKey) {
-			console.warn(
-				`[ErrorMonitor] No deploy key found for env var "${args.deployKeyEnvVar}" — skipping ${args.deploymentName}`,
-			);
+			await report("poll:deploy-key", "DEPLOY_KEY_MISSING");
 			return null;
 		}
 
 		const cursorParam = args.lastCursor != null ? args.lastCursor : 0;
 		const url = `${args.deploymentUrl}/api/stream_function_logs?cursor=${cursorParam}`;
 
+		// Where an exception was raised decides its code; the exception message
+		// itself is never logged or recorded (it can carry a key or a log value).
+		let stage: "fetch" | "parse" | "process" = "fetch";
 		try {
 			const resp = await fetch(url, {
 				headers: {
@@ -329,12 +393,11 @@ export const pollDeploymentLogs = internalAction({
 			});
 
 			if (!resp.ok) {
-				console.error(
-					`[ErrorMonitor] Failed to fetch logs for ${args.deploymentName}: HTTP ${resp.status}`,
-				);
+				await report("poll:fetch", `LOG_FETCH_HTTP_${resp.status}`);
 				return null;
 			}
 
+			stage = "parse";
 			const data = (await resp.json()) as {
 				entries?: Array<{
 					kind?: string;
@@ -346,7 +409,19 @@ export const pollDeploymentLogs = internalAction({
 					timestamp?: number;
 				}>;
 				newCursor?: number;
-			};
+			} | null;
+			if (
+				data === null ||
+				typeof data !== "object" ||
+				(data.entries !== undefined && !Array.isArray(data.entries))
+			) {
+				await report("poll:parse", "LOG_SHAPE_INVALID");
+				return null;
+			}
+			stage = "process";
+
+			// Deploy-window suppression is recorded once per poll, not per group.
+			let deployWindowSuppressed = false;
 
 			// Filter to Completion entries with a non-null error field
 			const failures = (data.entries ?? []).filter(
@@ -476,9 +551,7 @@ export const pollDeploymentLogs = internalAction({
 				// errorMonitorDeployWindow.ts for the full non-forgeable-signal
 				// rationale and its explicit HONEST LIMITATION section.
 				if (isDeployWindowActive(Date.now())) {
-					console.log(
-						`[ErrorMonitor] deploy-window active — skipping escalation pipeline for ${functionName}: ${errorMessage.slice(0, 120)}`,
-					);
+					deployWindowSuppressed = true;
 					continue;
 				}
 
@@ -496,16 +569,38 @@ export const pollDeploymentLogs = internalAction({
 				});
 			}
 
-			if (data.newCursor != null) {
+			if (deployWindowSuppressed) {
+				await report("poll:deploy-window", "DEPLOY_WINDOW_SUPPRESSED");
+			}
+
+			if (data.newCursor == null) {
+				// Without a new cursor the next poll re-reads the same window.
+				await report("poll:cursor", "CURSOR_MISSING");
+			} else if (
+				typeof data.newCursor !== "number" ||
+				!Number.isFinite(data.newCursor)
+			) {
+				await report("poll:cursor", "CURSOR_INVALID");
+			} else {
 				await ctx.runMutation(internal.errorMonitor.updateCursor, {
 					deploymentName: args.deploymentName,
 					cursor: data.newCursor,
 				});
 			}
-		} catch (err) {
-			console.error(
-				`[ErrorMonitor] Exception polling ${args.deploymentName}:`,
-				err,
+
+			if (!pollFailed) {
+				await ctx.runMutation(internal.errorMonitor.recordPollOk, {
+					deployment: args.deploymentName,
+				});
+			}
+		} catch {
+			await report(
+				`poll:${stage}`,
+				stage === "fetch"
+					? "LOG_FETCH_THROWN"
+					: stage === "parse"
+						? "LOG_PARSE_FAILED"
+						: "POLL_PROCESSING_FAILED",
 			);
 		}
 
@@ -517,12 +612,6 @@ export const pollDeploymentLogs = internalAction({
 // pollAllDeployments — cron entry point: polls every active deployment
 // ─────────────────────────────────────────────────────────────────────────────
 
-// R-20 — per-run bound on the polled-deployment fan-out. listActiveDeployments
-// already bounds its own read to .take(50) (errorMonitor.ts), but the fan-out
-// loop below bounds independently so this file is self-describing and a future
-// change to the upstream cap can't silently unbound this action's runtime.
-const DEPLOY_POLL_CAP = 50;
-
 export const pollAllDeployments = internalAction({
 	args: {},
 	returns: v.null(),
@@ -532,21 +621,11 @@ export const pollAllDeployments = internalAction({
 		// crashing the deployment. See errorMonitorKillSwitch.ts for contract.
 		assertKillSwitchHealth();
 
-		// Kill-switch: set AUTO_IRP_PAUSED=true in Convex env to skip the entire
-		// auto-IRP generation pipeline (poll → upsertError → createGitHubIssue →
-		// IRP mission cascade). Reversible without code re-deploy — just toggle env
-		// in Convex dashboard. Introduced 2026-06-02 for pre-public repo cleanup
-		// (Day 90 mission k57e4t21sr55rhz8ng554eseb987wvh3, T4 step). Unset/set-false
-		// to re-enable after public switch + matcher-gap fix lands.
-		// D90 hardened : uses shared isKillSwitchActive() helper. Same guard is
-		// now also applied at createGitHubIssue and http.ts webhook layers.
-		if (isKillSwitchActive()) {
-			console.log(
-				"[pollAllDeployments] Skipped — AUTO_IRP_PAUSED env var is set to 'true'.",
-			);
-			return null;
-		}
-
+		// Kill-switch: AUTO_IRP_PAUSED=true in Convex env stops the whole
+		// pipeline (poll → upsertError → createGitHubIssue → IRP cascade).
+		// Reversible without a re-deploy. The pause is no longer silent: it is
+		// recorded against every active deployment on every tick, so a monitor
+		// left paused is visible in `errorMonitor:listMonitorHealth`.
 		const allDeployments = (await ctx.runQuery(
 			internal.errorMonitor.listActiveDeployments,
 			{},
@@ -560,17 +639,47 @@ export const pollAllDeployments = internalAction({
 			active: boolean;
 			lastCursor?: number;
 		}>;
+
+		if (isKillSwitchActive()) {
+			for (const dep of allDeployments) {
+				await reportMonitorFailure(ctx, {
+					deployment: dep.name,
+					stage: "poll:kill-switch",
+					code: "KILL_SWITCH_ACTIVE",
+				});
+			}
+			return null;
+		}
+
 		const deployments = allDeployments.slice(0, DEPLOY_POLL_CAP);
+		// The query reads one row beyond the cap, so an overflow is visible here
+		// and recorded instead of silently never being polled.
+		for (const dep of allDeployments.slice(DEPLOY_POLL_CAP)) {
+			await reportMonitorFailure(ctx, {
+				deployment: dep.name,
+				stage: "poll:cap",
+				code: "DEPLOY_POLL_CAP_EXCEEDED",
+			});
+		}
 
 		for (const dep of deployments) {
-			await ctx.runAction(internal.errorMonitorActions.pollDeploymentLogs, {
-				deploymentName: dep.name,
-				deploymentUrl: dep.deploymentUrl,
-				deployKeyEnvVar: dep.deployKeyEnvVar,
-				githubRepo: dep.githubRepo,
-				orchestrator: dep.orchestrator,
-				lastCursor: dep.lastCursor,
-			});
+			try {
+				await ctx.runAction(internal.errorMonitorActions.pollDeploymentLogs, {
+					deploymentName: dep.name,
+					deploymentUrl: dep.deploymentUrl,
+					deployKeyEnvVar: dep.deployKeyEnvVar,
+					githubRepo: dep.githubRepo,
+					orchestrator: dep.orchestrator,
+					lastCursor: dep.lastCursor,
+				});
+			} catch {
+				// One deployment's failure must not stop the others.
+				await reportMonitorFailure(ctx, {
+					deployment: dep.name,
+					stage: "poll:action",
+					code: "POLL_ACTION_THROWN",
+				});
+			}
 		}
 
 		console.log(
