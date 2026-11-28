@@ -102,8 +102,18 @@ function classifyLockfileRun(r) {
 	if (r.status === 0) return { kind: "pass" };
 	const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
 	if (STALE_RE.test(output)) return { kind: "stale" };
-	if (r.error?.code === "ETIMEDOUT" || (r.signal && r.status == null)) {
+	// Only the spawn timeout is a timeout: spawnSync sets error.code ETIMEDOUT when
+	// its own `timeout` fires (and kills the child with SIGTERM). Any other signal is
+	// a kill from outside (the OOM killer's SIGKILL, an operator's SIGTERM) and is
+	// named as such, never read as an unreachable registry.
+	if (r.error?.code === "ETIMEDOUT") {
 		return { kind: "network", detail: "timed out" };
+	}
+	if (r.signal && r.status == null) {
+		return {
+			kind: "unrecognised",
+			detail: `bun install was killed by ${r.signal}`,
+		};
 	}
 	for (const re of NETWORK_LINE_RES) {
 		const m = output.match(re);
@@ -124,7 +134,8 @@ function lockfileFailureMessage(r, verdict) {
 	if (verdict.kind === "network") {
 		return `${head} could not judge: the npm registry was unreachable (${verdict.detail}); the lockfile was NOT judged stale. Re-run with network access.${dump}`;
 	}
-	return `${head} could not judge: bun install failed for a reason this gate does not recognise; read the output below.${dump}`;
+	const why = verdict.detail ? ` (${verdict.detail})` : "";
+	return `${head} could not judge: bun install failed for a reason this gate does not recognise${why}; read the output below.${dump}`;
 }
 
 describe("mcp-server isolated lockfile gate classifier", () => {
@@ -165,9 +176,20 @@ describe("mcp-server isolated lockfile gate classifier", () => {
 				}),
 			),
 		).toEqual({ kind: "network", detail: "timed out" });
+		// A signal without the spawn timeout is a kill from outside, never a timeout:
+		// the OOM killer's SIGKILL and an outside SIGTERM are named, not read as network.
 		expect(
-			classifyLockfileRun(shape({ status: null, signal: "SIGTERM" })).kind,
-		).toBe("network");
+			classifyLockfileRun(shape({ status: null, signal: "SIGKILL" })),
+		).toEqual({
+			kind: "unrecognised",
+			detail: "bun install was killed by SIGKILL",
+		});
+		expect(
+			classifyLockfileRun(shape({ status: null, signal: "SIGTERM" })),
+		).toEqual({
+			kind: "unrecognised",
+			detail: "bun install was killed by SIGTERM",
+		});
 		expect(
 			classifyLockfileRun(shape({ stderr: "error: something else broke" }))
 				.kind,
