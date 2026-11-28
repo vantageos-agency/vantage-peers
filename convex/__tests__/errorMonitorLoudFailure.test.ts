@@ -24,6 +24,9 @@ const modules = Object.fromEntries(
 	),
 );
 
+const makeT = () => convexTest(schema, modules);
+type T = ReturnType<typeof makeT>;
+
 const DEP = "prod-logs";
 const SECRET = "SECRET-DEPLOY-KEY-VALUE-9f8e7d";
 const LOG_VALUE = "LOG-VALUE-marie.curie@laboratoire-curie.fr";
@@ -60,7 +63,7 @@ afterEach(() => {
 	delete process.env.DEPLOY_WINDOW_UNTIL_MS;
 });
 
-const poll = (t: ReturnType<typeof convexTest>, env = "TEST_DEPLOY_KEY") =>
+const poll = (t: T, env = "TEST_DEPLOY_KEY") =>
 	t.action(internal.errorMonitorActions.pollDeploymentLogs, {
 		deploymentName: DEP,
 		deploymentUrl: "https://example.convex.cloud",
@@ -69,7 +72,7 @@ const poll = (t: ReturnType<typeof convexTest>, env = "TEST_DEPLOY_KEY") =>
 		orchestrator: "sigma",
 	});
 
-async function health(t: ReturnType<typeof convexTest>) {
+async function health(t: T) {
 	return await t.query(internal.errorMonitor.listMonitorHealth, {});
 }
 
@@ -98,7 +101,7 @@ function expectNoLeak(h: Awaited<ReturnType<typeof health>>) {
 
 describe("pollDeploymentLogs -- silent stop paths", () => {
 	test("deploy key env var missing", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t, "NO_SUCH_ENV_VAR");
 		const h = await health(t);
 		expectLoud(h, "DEPLOY_KEY_MISSING", "poll:deploy-key");
@@ -107,7 +110,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 
 	test("log fetch answers non-2xx", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(resp(false, 503)));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "LOG_FETCH_HTTP_503", "poll:fetch");
 	});
@@ -117,7 +120,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockRejectedValue(new Error(`boom ${SECRET} ${LOG_VALUE}`)),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		const h = await health(t);
 		expectLoud(h, "LOG_FETCH_THROWN", "poll:fetch");
@@ -134,7 +137,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 				},
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		const h = await health(t);
 		expectLoud(h, "LOG_PARSE_FAILED", "poll:parse");
@@ -146,7 +149,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockResolvedValue(resp(true, 200, { entries: "nope", newCursor: 1 })),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "LOG_SHAPE_INVALID", "poll:parse");
 	});
@@ -156,7 +159,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockResolvedValue(resp(true, 200, { entries: [] })),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "CURSOR_MISSING", "poll:cursor");
 	});
@@ -166,7 +169,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockResolvedValue(resp(true, 200, { entries: [], newCursor: "x" })),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "CURSOR_INVALID", "poll:cursor");
 	});
@@ -181,7 +184,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 				}),
 			),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "POLL_PROCESSING_FAILED", "poll:process");
 	});
@@ -204,7 +207,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 				}),
 			),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		expectLoud(await health(t), "DEPLOY_WINDOW_SUPPRESSED", "poll:deploy-window");
 	});
@@ -214,7 +217,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockResolvedValue(resp(true, 200, { entries: [], newCursor: 3 })),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		const h = await health(t);
 		expect(h.failures).toEqual([]);
@@ -223,7 +226,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 
 	test("a repeated failure increments the count on the same row", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(resp(false, 500)));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await poll(t);
 		await poll(t);
 		const h = await health(t);
@@ -233,7 +236,7 @@ describe("pollDeploymentLogs -- silent stop paths", () => {
 });
 
 describe("pollAllDeployments -- silent stop paths", () => {
-	const seed = async (t: ReturnType<typeof convexTest>, n: number) => {
+	const seed = async (t: T, n: number) => {
 		await t.run(async (ctx) => {
 			for (let i = 0; i < n; i++) {
 				await ctx.db.insert("monitoredDeployments", {
@@ -251,7 +254,7 @@ describe("pollAllDeployments -- silent stop paths", () => {
 
 	test("kill switch active: recorded on every active deployment", async () => {
 		process.env.AUTO_IRP_PAUSED = "true";
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seed(t, 2);
 		await t.action(internal.errorMonitorActions.pollAllDeployments, {});
 		const h = await health(t);
@@ -262,7 +265,7 @@ describe("pollAllDeployments -- silent stop paths", () => {
 	});
 
 	test("more active deployments than the poll cap: the overflow is recorded", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seed(t, 51);
 		await t.action(internal.errorMonitorActions.pollAllDeployments, {});
 		const h = await health(t);
@@ -273,7 +276,7 @@ describe("pollAllDeployments -- silent stop paths", () => {
 });
 
 describe("createGitHubIssue -- silent stop paths", () => {
-	const insertLog = async (t: ReturnType<typeof convexTest>, extra = {}) =>
+	const insertLog = async (t: T, extra = {}) =>
 		await t.run(async (ctx) =>
 			ctx.db.insert("errorLogs", {
 				hash: "h1",
@@ -288,7 +291,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 		);
 
 	const run = (
-		t: ReturnType<typeof convexTest>,
+		t: T,
 		errorId: Id<"errorLogs">,
 		githubRepo = REPO,
 	) =>
@@ -304,14 +307,14 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 	test("GITHUB_TOKEN missing", async () => {
 		delete process.env.GITHUB_TOKEN;
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		expectLoud(await health(t), "GITHUB_TOKEN_MISSING", "issue:token");
 	});
 
 	test("githubRepo malformed", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id, "not-a-repo");
 		expectLoud(await health(t), "GITHUB_REPO_INVALID", "issue:repo");
@@ -319,7 +322,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 	test("kill switch active at the issue layer", async () => {
 		process.env.AUTO_IRP_PAUSED = "true";
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		expectLoud(await health(t), "KILL_SWITCH_ACTIVE", "issue:kill-switch");
@@ -330,7 +333,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 			"fetch",
 			vi.fn().mockResolvedValue(resp(true, 201, { number: 5 })),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await t.run(async (ctx) => ctx.db.delete(id));
 		await run(t, id);
@@ -349,7 +352,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 				return resp(true, 201, { number: 77 });
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t, { issueNumber: 10, issueCreated: true });
 		await run(t, id);
 		expect(calls.some((c) => c.startsWith("POST") && c.endsWith("/issues"))).toBe(true);
@@ -365,7 +368,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 				return resp(true, 201, { number: 78 });
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t, { issueNumber: 10, issueCreated: true });
 		await run(t, id);
 		expectLoud(await health(t), "ISSUE_COMMENT_FAILED", "issue:comment");
@@ -373,7 +376,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 	test("issue creation answers non-2xx", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(resp(false, 422, { message: LOG_VALUE })));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		const h = await health(t);
@@ -383,7 +386,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 	test("issue creation fetch throws", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error(`net ${LOG_VALUE}`)));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		const h = await health(t);
@@ -393,7 +396,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 	test("issue creation succeeds but the number is missing", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(resp(true, 201, {})));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		expectLoud(await health(t), "ISSUE_NUMBER_MISSING", "issue:create");
@@ -409,7 +412,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 				},
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		expectLoud(await health(t), "ISSUE_RESPONSE_PARSE_FAILED", "issue:create");
@@ -424,7 +427,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 				return resp(true, 201, { number: 91 });
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const id = await insertLog(t);
 		await run(t, id);
 		expect((await health(t)).failures).toEqual([]);
@@ -436,7 +439,7 @@ describe("createGitHubIssue -- silent stop paths", () => {
 
 describe("autoResolveStaleIrp -- silent stop paths", () => {
 	const seedStale = async (
-		t: ReturnType<typeof convexTest>,
+		t: T,
 		extra: Record<string, unknown> = {},
 	) =>
 		await t.run(async (ctx) => {
@@ -469,7 +472,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 		});
 
 	const missionStatus = async (
-		t: ReturnType<typeof convexTest>,
+		t: T,
 		id: Id<"missions">,
 	) => (await t.run(async (ctx) => ctx.db.get(id)))?.status;
 
@@ -483,7 +486,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("GITHUB_TOKEN missing: nothing is closed, the stop is recorded", async () => {
 		delete process.env.GITHUB_TOKEN;
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const { missionId } = await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expect(await missionStatus(t, missionId)).toBe("execute");
@@ -492,7 +495,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("timeline check fails: unknown is not 'no PR'; nothing is closed", async () => {
 		vi.stubGlobal("fetch", ghMock({ timeline: resp(false, 500) }));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const { missionId } = await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expect(await missionStatus(t, missionId)).toBe("execute");
@@ -501,7 +504,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("issue close: comment non-2xx", async () => {
 		vi.stubGlobal("fetch", ghMock({ comment: resp(false, 403) }));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expectLoud(await health(t), "ISSUE_CLOSE_COMMENT_FAILED", "resolve:close");
@@ -509,7 +512,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("issue close: state patch non-2xx", async () => {
 		vi.stubGlobal("fetch", ghMock({ patch: resp(false, 422) }));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expectLoud(await health(t), "ISSUE_CLOSE_STATE_FAILED", "resolve:close");
@@ -523,7 +526,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 				throw new Error(`net ${LOG_VALUE}`);
 			}),
 		);
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		const h = await health(t);
@@ -533,7 +536,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("issue close: githubRepo malformed", async () => {
 		vi.stubGlobal("fetch", ghMock({}));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t, { githubRepo: "bad" });
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expectLoud(await health(t), "GITHUB_REPO_INVALID", "resolve:repo");
@@ -541,7 +544,7 @@ describe("autoResolveStaleIrp -- silent stop paths", () => {
 
 	test("a clean resolution records no failure", async () => {
 		vi.stubGlobal("fetch", ghMock({}));
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const { missionId } = await seedStale(t);
 		await t.action(internal.errorMonitorAutoResolver.autoResolveStaleIrp, {});
 		expect(await missionStatus(t, missionId)).toBe("complete");
