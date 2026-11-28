@@ -64,9 +64,9 @@ describe("ui:// door claim: a denied resolution is refused, never claimless", ()
 		const data = (thrown as { data?: { code?: string; reason?: string } }).data;
 		expect(data?.code).toBe("RBAC_DENIED");
 		expect(data?.reason).toBe("door-scope-denied");
-		expect(() => uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 })).toThrow(
-			/RBAC_DENIED/,
-		);
+		expect(() =>
+			uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 }),
+		).toThrow(/RBAC_DENIED/);
 		vi.doUnmock("../src/doorScope.js");
 		vi.resetModules();
 	});
