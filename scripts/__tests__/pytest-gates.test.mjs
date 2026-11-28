@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,28 +45,36 @@ function pytest(targets) {
 		).toBe(true);
 	}
 	const baseTemp = mkdtempSync(join(tmpdir(), "vp-pytest-gates-"));
+	const defaultRoot = join(baseTemp, "default-root");
+	mkdirSync(defaultRoot);
 	let result;
-	let baseTempUsed = false;
+	let defaultRootUsed = false;
 	try {
 		result = spawnSync(
 			"python3",
 			["-m", "pytest", "-q", `--basetemp=${join(baseTemp, "t")}`, ...targets],
 			{
 				cwd: repoRoot,
+				// pytest's DEFAULT temp root (where pytest-of-<user> would go) points at a
+				// witness directory inside the run's own directory: if --basetemp were not
+				// honoured, pytest would create pytest-of-<user> in it, and the assertion below turns red.
+				env: {
+					...process.env,
+					PYTEST_DEBUG_TEMPROOT: defaultRoot,
+				},
 				encoding: "utf8",
 				maxBuffer: 64 * 1024 * 1024,
 				timeout: 240_000,
 			},
 		);
-		// pytest wrote under the basetemp it was handed: the flag reached it.
-		baseTempUsed = existsSync(join(baseTemp, "t"));
+		defaultRootUsed = readdirSync(defaultRoot).length > 0;
 	} finally {
 		rmSync(baseTemp, { recursive: true, force: true });
 	}
 	expect(
-		baseTempUsed,
-		`pytest did not use the per-run basetemp ${join(baseTemp, "t")}; it would write to /tmp/pytest-of-<user> instead.`,
-	).toBe(true);
+		defaultRootUsed,
+		"pytest wrote under its default temp root instead of the per-run --basetemp; on a shared /tmp that is /tmp/pytest-of-<user>.",
+	).toBe(false);
 	expect(
 		existsSync(baseTemp),
 		`${baseTemp} survived the run; the per-run pytest basetemp must be removed.`,
