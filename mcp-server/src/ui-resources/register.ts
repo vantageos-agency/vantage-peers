@@ -23,7 +23,6 @@ import {
 	verifiedOrgIdOf,
 	verifiedOrgSlugOf,
 } from "../doorScope.js";
-import { withVerifiedActor } from "../verifiedActor.js";
 import {
 	listUiResources,
 	readUiResource,
@@ -130,17 +129,16 @@ export function uiResourceDoorClaim(
 
 export function registerUiResources(
 	server: McpServer,
-	rawConvex: UiResourceConvexClient,
+	// The caller passes the client wrapped with withVerifiedActor (server-http.ts), the
+	// same wrapper registerTools uses, so a door call carries the caller's agent ID
+	// exactly where a tool call does (VERIFIED_ACTOR_DOORS, MASTER_ACTOR_CLAIM_DOORS).
+	convex: UiResourceConvexClient,
 	oauthCtx: OAuthContext | undefined,
 	identity: UiResourceCallerIdentity,
 	// The origin this request was served on (resolveIssuer), for the views'
 	// `_meta.ui.domain`. Null when unknown: no domain is declared.
 	publicBaseUrl: string | null = null,
 ): void {
-	// S-28: the same wrapper as registerTools (tools.ts), so a primitive's door call
-	// carries the caller's verified agent ID exactly where a tool call does
-	// (VERIFIED_ACTOR_DOORS, MASTER_ACTOR_CLAIM_DOORS), and nowhere else.
-	const convex = withVerifiedActor(rawConvex, oauthCtx);
 	// Registered with a ResourceTemplate so that resources/list (via
 	// listCallback) and resources/read both work.
 	// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
@@ -171,7 +169,7 @@ export function registerUiResources(
 			) => {
 				// The organisation claim is set after the URI-derived arguments, so a
 				// URI argument can never replace it. The agent ID is added by the
-				// wrapped client (withVerifiedActor, as for a tool call), for the
+				// wrapped client the caller passes (withVerifiedActor), for the
 				// doors in VERIFIED_ACTOR_DOORS only.
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(

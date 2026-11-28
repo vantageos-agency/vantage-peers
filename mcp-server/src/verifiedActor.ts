@@ -171,10 +171,8 @@ export function verifiedActorOf(
 	return undefined;
 }
 
-// `mutation` is optional: a read-only client (the ui:// resources take only
-// `query`) is wrapped the same way; the proxy forwards whichever method is called.
 type MutatingClient = {
-	mutation?: (name: never, args: never, ...rest: never[]) => unknown;
+	mutation: (name: never, args: never, ...rest: never[]) => unknown;
 	query?: (name: never, args: never, ...rest: never[]) => unknown;
 	action?: (name: never, args: never, ...rest: never[]) => unknown;
 };

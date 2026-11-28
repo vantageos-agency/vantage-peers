@@ -104,6 +104,7 @@ import {
 } from "./src/serverDiscovery.js";
 import { registerTools } from "./src/tools.js";
 import { registerUiResources } from "./src/ui-resources/register.js";
+import { withVerifiedActor } from "./src/verifiedActor.js";
 
 let pkg: { version: string };
 try {
@@ -1664,9 +1665,11 @@ function buildMcpServer(
 	// refuses it before any Convex query.)
 	const master = oauthCtx === undefined || isMasterScope(oauthCtx);
 	const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+	// S-28: the same wrapper as registerTools (tools.ts), so a ui:// door call carries
+	// the caller's verified agent ID exactly where a tool call does, and nowhere else.
 	registerUiResources(
 		server,
-		convex,
+		withVerifiedActor(convex, oauthCtx),
 		oauthCtx,
 		{ master, callerIdentities },
 		iconOrigin,
