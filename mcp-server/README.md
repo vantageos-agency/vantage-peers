@@ -333,6 +333,7 @@ _Applies to: Cloud and Self-host._
 
 - **Annotations.** Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. A tool marked read-only is checked against what its handler does.
 - **Paging.** Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor. `get_github_owner_bindings` takes `limit`, `cursor` and `unprovenCursor` and returns `nextCursor` and `unprovenNextCursor`.
+- **7.2.0 behaviours.** `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` forward the caller's verified organisation to doors that apply it inside the read (#1821); `get_mission_template` forwards a no-organisation caller's roster (#1822); the `ui://` resources carry the caller's verified agent ID where a tool call does (#1820); `get_tool_usage` with no argument from a master seat with a verified agent ID reads its own usage (#1824). On Self-host, the backend contract required is 38.
 - **7.1.0 behaviours.** Every registered tool declares an `outputSchema` and returns `structuredContent` on success, and a registration without an `outputSchema` fails at registration. `get_issue` and `issue_stats` check the caller's scope before the master-only read (#1815). `get_mission_template` forwards the caller's verified organisation to the template door (#1818). On Self-host, the backend contract required is 36 (#1813, #1818).
 - **7.0.0 behaviours.** The five Knowledge Base tools refuse a bearer with no verified organisation unless it is the master or a Clerk session (#1804). `list_bus` pages beyond the first are reachable with the `nextCursor` it returns, and `list_bus` and `list_repo_mappings` refuse a cursor of an unknown shape instead of restarting at page 1 (#1807).
 - **6.0.0 behaviours.** `create_recurring_task` requires `project`; an empty or blank one is refused (#1800). `list_repo_mappings` pages beyond the first are reachable with the `nextCursor` it returns (#1805), and an out-of-scope row is served with `orchestrator` absent and `outOfScope.reason` set. On Self-host, `CLERK_DOMAIN` is required for the service-account mint, with no default: an unset, empty or whitespace-only value is refused before any Clerk call (#1795); since 7.0.0 (#1802) Clerk JWT verification and `whoami` refuse it the same way.
@@ -411,6 +412,16 @@ Before it serves anything, the server asks your backend for its contract manifes
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
 
 ## Release notes
+
+### 7.2.0
+
+_Applies to: Cloud and Self-host._ A minor release: Self-host requires backend contract 38, and four tools forward the caller's verified organisation to doors that now decide it inside the read; no tool or argument is removed, no success becomes an error, and no working credential is refused.
+
+- Self-host: the backend contract required moves from 36 to 38, with 155 called functions (unchanged); deploy the backend first (see [Backend compatibility check](#backend-compatibility-check)). Upgrade note: deploy the backend of this release first, then upgrade this package; a backend below contract 38 is refused at start. Cloud clients have nothing to upgrade or configure: the Cloud backend is deployed by the platform (#1821, #1822).
+- Cloud and Self-host: `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` forward the caller's verified organisation; the doors apply it inside the read and every answer is unchanged, except that `get_fix_pattern` on a pattern outside the caller's roster, already refused with `RBAC_DENIED`, now carries the door's refusal text (#1821).
+- Cloud and Self-host: `get_mission_template` forwards the caller's roster for a caller with no verified organisation; answers unchanged (#1822).
+- Cloud and Self-host: the `ui://` resources use the tools' wrapped client, so `ui://vp/v1/memory-quote` carries the caller's verified agent ID; `list_blocked_on_me` states the claim at its call; answers unchanged (#1820).
+- Cloud and Self-host: `get_tool_usage` with no argument from a master seat holding a verified agent ID reads that agent's own usage instead of answering `caller-unidentified` (#1824).
 
 ### 7.1.0
 
