@@ -282,6 +282,12 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["get_task", "tasks:getById", org, false],
 	["get_mission", "missions:get", org, false],
 	["get_mission_template", "missionTemplates:getByName", org, false],
+	// S-28 (task k17esvscdrzgmx6ef40n3nyj4s8k009s): the three reads that served the
+	// service account as master send the bearer's verified org.
+	["list_memories", "memories:listMemories", org, false],
+	["list_episodes", "memories:listMemories", org, false],
+	["get_profile", "profiles:getProfile", org, false],
+	["get_fix_pattern", "fixPatterns:get", org, false],
 	["create_task_in_mission", "missions:get", org, false],
 	["update_recurring_task", "recurringTasks:getById", org, false],
 	["get_recurring_task", "recurringTasks:getById", org, false],

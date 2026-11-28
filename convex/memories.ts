@@ -375,6 +375,10 @@ export const listMemories = query({
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
     // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for a service-account bearer
+    // (S-28 / S-35). Believed from the service account only (convex/lib/verifiedOrg.ts);
+    // the read then runs under that organisation's member scope.
+    verifiedOrg: v.optional(verifiedOrgValidator),
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     // Omitted: every namespace, fleet master only (list_episodes documents it). A
     // caller who is not the fleet master is REFUSED with RBAC_DENIED, never served
@@ -399,7 +403,16 @@ export const listMemories = query({
     // the signed-in-no-org branch to a typed refused scope; the pre-existing
     // isNamespaceAllowedForScope guard below already renders that as the
     // typed-empty page, never a throw.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    // S-28 / S-35: with a verifiedOrg claim the read runs under that
+    // organisation's member scope, so the page is decided inside the read; with
+    // none the transport's scope stands, byte-unchanged (expand only).
+    const scope = await resolveVerifiedOrgScope(
+      ctx,
+      transportScope,
+      args.verifiedOrg,
+      "memories:listMemories",
+    );
     // M10a: a row is served by its org ID (memoryVisibleToScope), never by the
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other

@@ -12,7 +12,8 @@ import {
 import { resolveEraseCaller } from "./lib/eraseRow";
 import { performFixPatternErase } from "./lib/eraseFixPattern";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
-import type { OrgScope } from "./lib/auth";
+import { isOrchestratorOnOrgRoster, type OrgScope } from "./lib/auth";
+import { resolveVerifiedOrgScope, verifiedOrgValidator } from "./lib/verifiedOrg";
 import { rbacDenied } from "./lib/inboxReader";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireVerifiedActorPrincipal } from "./lib/actingPrincipal";
@@ -259,6 +260,12 @@ export const get = query({
 		// not consulted. Absent, the legacy roster of names narrows as before (the
 		// MCP that predates the claim, or an org-level bearer with no single agent).
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (S-28 / S-35). Believed from the service account only. The table has no
+		// tenant column, so the claim narrows by creator: the pattern is read only
+		// when its creator is on that organisation's roster (RBAC_DENIED otherwise,
+		// the refusal this door already gives a creator outside the roster).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.union(
 		v.object({
@@ -307,6 +314,14 @@ export const get = query({
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
+		// S-28 / S-35: the claim is resolved before any row is read (service account
+		// only; an unknown or inactive org is refused). Absent, nothing changes.
+		const orgScope = await resolveVerifiedOrgScope(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"fixPatterns:get",
+		);
 		// The verified acting agent is judged BY ID before any row is read: the
 		// service account only, the agents row active and in the org the transport
 		// verified it in.
@@ -327,6 +342,17 @@ export const get = query({
 		);
 		const pattern = await ctx.db.get(patternId);
 		if (pattern === null) return null;
+		if (
+			args.verifiedOrg !== undefined &&
+			!orgScope.fleetWide &&
+			!isOrchestratorOnOrgRoster(orgScope, pattern.createdBy)
+		) {
+			throw rbacDenied(
+				"fixPatterns:get",
+				"not-in-creator-roster",
+				`the caller may not read fix pattern ${args.patternId}: it was created by an agent outside the verified organisation's roster. This is a refusal, not an absence`,
+			);
+		}
 		if (args.verifiedActor !== undefined) {
 			// The roster check by ID: the pattern's creator is an agent of the
 			// operator organisation (a stamped ID, else its label resolved once there);

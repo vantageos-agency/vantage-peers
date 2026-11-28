@@ -22,6 +22,7 @@ import {
   visibleProfiles,
 } from "./lib/profileActors";
 import { isNamespaceAllowedForScope } from "./memories";
+import { resolveVerifiedOrgScope, verifiedOrgValidator } from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WHO MAY WRITE, AND WHICH ROW IS WHOSE (module M10d).
@@ -185,6 +186,10 @@ export const getProfile = query({
     // it (mcp-server/src/verifiedActor.ts). The read is then judged by that
     // agent's stored organisation ID, never by a name.
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for a service-account bearer
+    // (S-28 / S-35). Believed from the service account only; the read then runs
+    // under that organisation's member scope (roster check, rows by agent ID).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: v.union(profileDocValidator, v.null()),
   handler: async (ctx, args) => {
@@ -198,10 +203,18 @@ export const getProfile = query({
     // REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber.
     //   grep -rn "profiles\.getProfile\b" app components hooks lib (dashboard) -> 0
     // Its only consumer is the MCP `get_profile` tool (one-shot `convex.query`).
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    requireResolvedCaller(scope, "profiles:getProfile", {
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    requireResolvedCaller(transportScope, "profiles:getProfile", {
       alsoRefusePreOrg: true,
     });
+    // S-28 / S-35: with a verifiedOrg claim the read runs under that
+    // organisation's member scope; with none the transport's scope stands.
+    const scope = await resolveVerifiedOrgScope(
+      ctx,
+      transportScope,
+      args.verifiedOrg,
+      "profiles:getProfile",
+    );
 
     // ROSTER FIRST, THEN LOOKUP. The roster predicate is on the REQUESTED
     // orchestrator, so it can run before the read: a non-roster member is

@@ -3913,7 +3913,11 @@ export function registerTools(
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
-					{ ...queryArgs, ...actorClaim() },
+					{
+						...queryArgs,
+						...actorClaim(),
+						...doorScopeArgs("memories:listMemories", undefined),
+					},
 				);
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
@@ -4138,6 +4142,7 @@ export function registerTools(
 				const profile = await convex.query("profiles:getProfile" as any, {
 					orchestratorId,
 					...actorClaim(),
+					...doorScopeArgs("profiles:getProfile", undefined),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// profiles rows (schema.ts:118) carry `orchestratorId`, NOT
@@ -4347,7 +4352,11 @@ export function registerTools(
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
-					{ ...queryArgs, ...actorClaim() },
+					{
+						...queryArgs,
+						...actorClaim(),
+						...doorScopeArgs("memories:listMemories", undefined),
+					},
 				);
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
@@ -13121,6 +13130,7 @@ export function registerTools(
 					// A fleet-master seat reads every pattern, so it is sent no actor
 					// (MASTER_UNNARROWED_DOORS); every other bearer is narrowed by its ID.
 					...(isMasterScope(oauthCtx) ? {} : actorClaim()),
+					...doorScopeArgs("fixPatterns:get", undefined),
 				});
 				if (row === null || row === undefined) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
