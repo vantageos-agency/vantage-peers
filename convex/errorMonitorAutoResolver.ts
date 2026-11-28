@@ -12,7 +12,7 @@
 // Resolution cascade per closed mission:
 //   1. Cascade-close all open tasks (status → "done", completionNote set).
 //   2. Patch mission status → "complete".
-//   3. Close the GitHub issue with a standard auto-resolve comment.
+//   3. Close the GitHub issue with a factual comment (no recurrence observed since <t>).
 //   4. Mark the errorLog row as autoResolved = true.
 //
 // Legitimate path protection: if a linked PR exists on the GH issue, the
@@ -26,14 +26,8 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
 import { AUTO_RESOLVE_QUIET_WINDOW_MS } from "./errorMonitor";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Constants (shared with resolveStaleIrpMission in errorMonitor.ts)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const AUTO_RESOLVE_NOTE =
-	"Auto-resolved — error stopped recurring (no occurrences in 24h, no PR opened). " +
-	"Closing to keep queues clean. Re-open if it returns.";
+import { buildAutoResolveNote } from "./errorMonitorAutoResolveNote";
+import { reportMonitorFailure } from "./errorMonitorHealth";
 
 const VANTAGE_SIGNATURE = "VantageOS Team";
 
@@ -41,15 +35,27 @@ const VANTAGE_SIGNATURE = "VantageOS Team";
 // closeGitHubIssueWithComment
 // ─────────────────────────────────────────────────────────────────────────────
 
+type CloseResult =
+	| { ok: true }
+	| {
+			ok: false;
+			stage: string;
+			code:
+				| "ISSUE_CLOSE_COMMENT_FAILED"
+				| "ISSUE_CLOSE_STATE_FAILED"
+				| "ISSUE_CLOSE_THROWN";
+	  };
+
+// Every non-2xx answer and every thrown fetch is a FAILED close, returned to
+// the caller to record. Response text and thrown messages are never surfaced.
 async function closeGitHubIssueWithComment(
-	githubRepo: string,
+	owner: string,
+	repo: string,
 	issueNumber: number,
 	token: string,
 	today: string,
-): Promise<void> {
-	const [owner, repo] = githubRepo.split("/");
-	if (!owner || !repo) return;
-
+	lastSeenMs: number,
+): Promise<CloseResult> {
 	const base = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`;
 	const headers = {
 		Authorization: `Bearer ${token}`,
@@ -58,49 +64,77 @@ async function closeGitHubIssueWithComment(
 		"User-Agent": "vantagepeers-bot/1.0",
 	};
 
-	await fetch(`${base}/comments`, {
-		method: "POST",
-		headers,
-		body: JSON.stringify({
-			body: `${AUTO_RESOLVE_NOTE}\n\n---\n*${VANTAGE_SIGNATURE} | ${today}*`,
-		}),
-	});
+	try {
+		const comment = await fetch(`${base}/comments`, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				body: `${buildAutoResolveNote(lastSeenMs)}\n\n---\n*${VANTAGE_SIGNATURE} | ${today}*`,
+			}),
+		});
+		if (!comment.ok) {
+			return {
+				ok: false,
+				stage: "resolve:close",
+				code: "ISSUE_CLOSE_COMMENT_FAILED",
+			};
+		}
 
-	await fetch(base, {
-		method: "PATCH",
-		headers,
-		body: JSON.stringify({ state: "closed" }),
-	});
+		const patch = await fetch(base, {
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ state: "closed" }),
+		});
+		if (!patch.ok) {
+			return {
+				ok: false,
+				stage: "resolve:close",
+				code: "ISSUE_CLOSE_STATE_FAILED",
+			};
+		}
+		return { ok: true };
+	} catch {
+		return { ok: false, stage: "resolve:close", code: "ISSUE_CLOSE_THROWN" };
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // hasLinkedPR — check if the GH issue has a linked PR
 // ─────────────────────────────────────────────────────────────────────────────
 
+// "unknown" is its own answer: a failed check is NOT "no PR". Treating it as
+// "no" closed missions and issues that had active work linked.
+type LinkedPrResult = "yes" | "no" | "unknown";
+
 async function hasLinkedPR(
-	githubRepo: string,
+	owner: string,
+	repo: string,
 	issueNumber: number,
 	token: string,
-): Promise<boolean> {
-	const [owner, repo] = githubRepo.split("/");
-	if (!owner || !repo) return false;
-
-	const resp = await fetch(
-		`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/timeline`,
-		{
-			headers: {
-				Authorization: `Bearer ${token}`,
-				Accept: "application/vnd.github.mockingbird-preview+json",
-				"User-Agent": "vantagepeers-bot/1.0",
+): Promise<LinkedPrResult> {
+	try {
+		const resp = await fetch(
+			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/timeline`,
+			{
+				headers: {
+					Authorization: `Bearer ${token}`,
+					Accept: "application/vnd.github.mockingbird-preview+json",
+					"User-Agent": "vantagepeers-bot/1.0",
+				},
 			},
-		},
-	);
-	if (!resp.ok) return false;
+		);
+		if (!resp.ok) return "unknown";
 
-	const events = (await resp.json()) as Array<{ event?: string }>;
-	return events.some(
-		(e) => e.event === "cross-referenced" || e.event === "connected",
-	);
+		const events = (await resp.json()) as Array<{ event?: string }>;
+		if (!Array.isArray(events)) return "unknown";
+		return events.some(
+			(e) => e.event === "cross-referenced" || e.event === "connected",
+		)
+			? "yes"
+			: "no";
+	} catch {
+		return "unknown";
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,21 +162,66 @@ export const autoResolveStaleIrp = internalAction({
 			`[AutoResolver] Found ${staleErrors.length} stale auto-IRP candidates.`,
 		);
 
+		// Without a token the linked-PR guard cannot run and the issue cannot be
+		// closed. Closing the mission anyway would leave work-in-progress
+		// unprotected and the issue open, so nothing is closed and the stop is
+		// recorded against each affected deployment.
+		if (!token) {
+			const deployments = new Set(staleErrors.map((e) => e.deployment));
+			for (const deployment of deployments) {
+				await reportMonitorFailure(ctx, {
+					deployment,
+					stage: "resolve:token",
+					code: "GITHUB_TOKEN_MISSING",
+				});
+			}
+			return null;
+		}
+
 		let resolved = 0;
 		let skipped = 0;
 
 		for (const errorLog of staleErrors) {
 			const missionId = errorLog.irpMissionId;
-			if (!missionId) continue;
+			if (!missionId) {
+				await reportMonitorFailure(ctx, {
+					deployment: errorLog.deployment,
+					stage: "resolve:mission",
+					code: "MISSION_LINK_MISSING",
+				});
+				continue;
+			}
 
-			// Guard: skip if a PR is already linked — active work is in progress
-			if (token && errorLog.issueNumber != null && errorLog.githubRepo) {
-				const hasPR = await hasLinkedPR(
-					errorLog.githubRepo,
-					errorLog.issueNumber,
-					token,
-				);
-				if (hasPR) {
+			const hasIssue = errorLog.issueNumber != null && !!errorLog.githubRepo;
+			let owner = "";
+			let repo = "";
+			if (hasIssue) {
+				[owner, repo] = (errorLog.githubRepo ?? "").split("/");
+				if (!owner || !repo) {
+					await reportMonitorFailure(ctx, {
+						deployment: errorLog.deployment,
+						stage: "resolve:repo",
+						code: "GITHUB_REPO_INVALID",
+					});
+					skipped++;
+					continue;
+				}
+			}
+
+			// Guard: skip if a PR is already linked — active work is in progress.
+			// An unanswerable check also skips: unknown is not "no PR".
+			if (hasIssue && errorLog.issueNumber != null) {
+				const pr = await hasLinkedPR(owner, repo, errorLog.issueNumber, token);
+				if (pr === "unknown") {
+					await reportMonitorFailure(ctx, {
+						deployment: errorLog.deployment,
+						stage: "resolve:pr-check",
+						code: "PR_CHECK_FAILED",
+					});
+					skipped++;
+					continue;
+				}
+				if (pr === "yes") {
 					console.log(
 						`[AutoResolver] Skipping errorLog ${errorLog._id} — linked PR found on #${errorLog.issueNumber}.`,
 					);
@@ -158,31 +237,33 @@ export const autoResolveStaleIrp = internalAction({
 			);
 
 			// Close the GH issue
-			if (token && errorLog.issueNumber != null && errorLog.githubRepo) {
-				try {
-					await closeGitHubIssueWithComment(
-						errorLog.githubRepo,
-						errorLog.issueNumber,
-						token,
-						today,
-					);
-				} catch (err) {
-					console.warn(
-						`[AutoResolver] GH issue close failed for #${errorLog.issueNumber}:`,
-						err,
-					);
+			if (hasIssue && errorLog.issueNumber != null) {
+				const closed = await closeGitHubIssueWithComment(
+					owner,
+					repo,
+					errorLog.issueNumber,
+					token,
+					today,
+					errorLog.lastSeen,
+				);
+				if (!closed.ok) {
+					await reportMonitorFailure(ctx, {
+						deployment: errorLog.deployment,
+						stage: closed.stage,
+						code: closed.code,
+					});
 				}
 			}
 
 			console.log(
-				`[AutoResolver] Resolved mission ${missionId} (errorLog ${errorLog._id}): ` +
+				`[AutoResolver] Closed mission ${missionId} (errorLog ${errorLog._id}): ` +
 					`${result.tasksClosedCount} tasks closed, missionClosed=${result.missionClosed}.`,
 			);
 			resolved++;
 		}
 
 		console.log(
-			`[AutoResolver] Done. Resolved: ${resolved}, skipped (PR linked): ${skipped}.`,
+			`[AutoResolver] Done. Closed: ${resolved}, skipped (PR linked or check failed): ${skipped}.`,
 		);
 		return null;
 	},
