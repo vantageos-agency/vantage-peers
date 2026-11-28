@@ -1,0 +1,4 @@
+node_modules
+dist
+# The service is built with npm ci (nixpacks.toml); its lockfile is committed despite the root ignore.
+!package-lock.json

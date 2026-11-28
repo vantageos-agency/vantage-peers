@@ -1,0 +1,19 @@
+{
+	"name": "vantage-peers-edge-proxy",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Rate-limit proxy in front of the VantagePeers Cloud MCP: limits the unauthenticated requests that can trigger a client-metadata fetch and forwards the client address in one signed header.",
+	"type": "module",
+	"scripts": {
+		"build": "tsc --project tsconfig.json",
+		"start": "node dist/server.js",
+		"typecheck": "tsc --project tsconfig.json --noEmit"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.1",
+		"typescript": "5.9.3"
+	}
+}
