@@ -287,7 +287,8 @@ export function registerKbIngestTools(
 	// prefix, no verified slug, and is not a Clerk session, whose own org Convex
 	// already sees) is refused here, before the door, instead of reaching a door
 	// that would take the namespace on its word. The master is refused earlier by
-	// resolveOrgContext (store/soft-delete/generate) and keeps its path in claim_upload.
+	// resolveOrgContext (store/soft-delete/generate) and by claim_upload's own
+	// refusal below (S-28: a master that resolves no organisation presents no right).
 	const unresolvedOrgDenial = (tool: string, door: string): void => {
 		const denial = identityUnresolvedOrgDenial(
 			{
@@ -553,6 +554,18 @@ export function registerKbIngestTools(
 		},
 		async ({ storageId, ticket }) => {
 			try {
+				// A right is presented, never inferred (Pi ruling, S-28): the master
+				// bearer resolves no organisation, so it presents none and is refused
+				// here with the same code resolveOrgContext gives the other KB tools.
+				if (
+					oauthCtx?.isMaster === true &&
+					verifiedOrgSlugOf(oauthCtx) === undefined
+				) {
+					throw new ProtocolError(
+						ProtocolErrorCode.InvalidRequest,
+						"AUTH_NO_ORG_ID: claim_upload requires a verified organisation (a seat or team-scoped bearer). A master-scope bearer presents none and cannot claim an upload.",
+					);
+				}
 				unresolvedOrgDenial("claim_upload", "kbMutations:claimUpload");
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				const result = (await convex.mutation(

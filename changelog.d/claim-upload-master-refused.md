@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **VantagePeers Cloud: `claim_upload` is refused to a master bearer that presents no organisation (task k17esvscdrzgmx6ef40n3nyj4s8k009s, S-28).** This is a contraction ruled by Pi: a right is presented, never inferred. `kbMutations:claimUpload` now refuses a service-account call that carries no `verifiedOrg` with `RBAC_DENIED`, where it used to serve it as master and bind the blob to the ticket's org. The MCP tool `claim_upload` refuses a master bearer that resolves no organisation with `AUTH_NO_ORG_ID` before the door, the same coded refusal the other KB tools give. No caller used the claim as the master: the sweep found the MCP tool for seats (which carry `verifiedOrg`), the dashboard as a Clerk member, and the evals as `caller: seat`. No new argument, so no contract bump. Pinned by `convex/__tests__/claimUploadContract.test.ts`.
