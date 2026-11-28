@@ -225,7 +225,7 @@ export function registerKbIngestTools(
 	// forwarded JWT): its org is the `team/<orgId>` write prefix the Clerk branch
 	// mints (auth.ts), found by SHAPE among the prefixes, unchanged.
 	const resolveOrgContext = (
-		tool = "store_document_chunked",
+		tool?: string,
 	): {
 		orgId: string;
 		namespacePrefix: string;
@@ -235,7 +235,7 @@ export function registerKbIngestTools(
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
 			throw new ProtocolError(
 				ProtocolErrorCode.InvalidRequest,
-				`AUTH_NO_ORG_ID: ${tool} requires a verified organisation (a seat or team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.`,
+				`AUTH_NO_ORG_ID: ${tool ?? "store_document_chunked"} requires a verified organisation (a seat or team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.`,
 			);
 		}
 		const verified = verifiedOrgSlugOf(oauthCtx);
