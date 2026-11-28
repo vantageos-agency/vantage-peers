@@ -40,6 +40,7 @@ function pytest(targets) {
 	}
 	const baseTemp = mkdtempSync(join(tmpdir(), "vp-pytest-gates-"));
 	let result;
+	let baseTempUsed = false;
 	try {
 		result = spawnSync(
 			"python3",
@@ -51,9 +52,15 @@ function pytest(targets) {
 				timeout: 240_000,
 			},
 		);
+		// pytest wrote under the basetemp it was handed: the flag reached it.
+		baseTempUsed = existsSync(join(baseTemp, "t"));
 	} finally {
 		rmSync(baseTemp, { recursive: true, force: true });
 	}
+	expect(
+		baseTempUsed,
+		`pytest did not use the per-run basetemp ${join(baseTemp, "t")}; it would write to /tmp/pytest-of-<user> instead.`,
+	).toBe(true);
 	expect(
 		existsSync(baseTemp),
 		`${baseTemp} survived the run; the per-run pytest basetemp must be removed.`,
