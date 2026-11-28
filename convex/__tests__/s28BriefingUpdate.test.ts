@@ -16,6 +16,8 @@
 //   UNCHANGED  service account, no claim -> as before (expand only)
 //   REFUSED    a non-service caller presenting verifiedOrg -> RBAC_DENIED
 //   INACTIVE   a claim naming an inactive org -> RBAC_DENIED
+//   COLLISION  two orgs each hold an agent labelled the same; with no agent proof the
+//              label resolves in the VERIFIED org only (the proof binding of the actor lookup)
 
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
@@ -202,5 +204,56 @@ describe("briefingNotes:update applies the verified org inside the write", () =>
 		expect(out).toContain("RBAC_DENIED");
 		expect(out).toContain("org-not-active");
 		expect(await titleOf(t, noteA)).toBe("note of A");
+	});
+
+	test("COLLISION: a label held by two orgs resolves in the verified org only", async () => {
+		const { t } = await world();
+		// "alice" is registered in BOTH org A and org B; the note is B's alice's.
+		const noteB = await t.run(async (ctx) => {
+			const alice = (orgSlug: string, clerkOrgId: string) =>
+				ctx.db.insert("agents", {
+					orgSlug,
+					clerkOrgId,
+					name: "alice",
+					normalizedName: normalizeOrchestratorId("alice"),
+					isActive: true,
+					createdAt: NOW,
+				});
+			const aliceA = await alice(A_SLUG, A_ID);
+			const aliceB = await alice(B_SLUG, B_ID);
+			const roster = async (slug: string, agentId: Id<"agents">) => {
+				const row = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+					.unique();
+				if (row === null) throw new Error(`no mapping for ${slug}`);
+				await ctx.db.patch(row._id, {
+					allowedOrchestrators: [...row.allowedOrchestrators, "alice"],
+					allowedAgentIds: [...(row.allowedAgentIds ?? []), agentId],
+				});
+			};
+			await roster(A_SLUG, aliceA);
+			await roster(B_SLUG, aliceB);
+			return ctx.db.insert("briefingNotes", {
+				title: "note of B",
+				topic: "handoff",
+				participants: ["alice"],
+				content: "b content",
+				createdBy: "alice",
+				createdById: aliceB,
+				participantIds: [aliceB],
+				createdAt: 1,
+				orgId: B_SLUG,
+				clerkOrgId: B_ID,
+			});
+		});
+		// No agent proof: only the asserted label and the verified org.
+		await asService(t).mutation(api.briefingNotes.update, {
+			noteId: noteB,
+			callerOrchestrator: "alice",
+			verifiedOrg: claimB,
+			title: "renamed by B's alice",
+		});
+		expect(await titleOf(t, noteB)).toBe("renamed by B's alice");
 	});
 });
