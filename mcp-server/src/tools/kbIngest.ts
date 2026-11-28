@@ -224,7 +224,9 @@ export function registerKbIngestTools(
 	// A Clerk team bearer has no such claim here (its own org reaches Convex on the
 	// forwarded JWT): its org is the `team/<orgId>` write prefix the Clerk branch
 	// mints (auth.ts), found by SHAPE among the prefixes, unchanged.
-	const resolveOrgContext = (): {
+	const resolveOrgContext = (
+		tool = "store_document_chunked",
+	): {
 		orgId: string;
 		namespacePrefix: string;
 		verifiedOrg?: { orgSlug: string; orgId?: string };
@@ -233,7 +235,7 @@ export function registerKbIngestTools(
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
 			throw new ProtocolError(
 				ProtocolErrorCode.InvalidRequest,
-				"AUTH_NO_ORG_ID: store_document_chunked requires a verified organisation (a seat or team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.",
+				`AUTH_NO_ORG_ID: ${tool} requires a verified organisation (a seat or team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.`,
 			);
 		}
 		const verified = verifiedOrgSlugOf(oauthCtx);
@@ -554,19 +556,11 @@ export function registerKbIngestTools(
 		},
 		async ({ storageId, ticket }) => {
 			try {
-				// A right is presented, never inferred (Pi ruling, S-28): the master
-				// bearer resolves no organisation, so it presents none and is refused
-				// here with the same code resolveOrgContext gives the other KB tools.
-				if (
-					oauthCtx?.isMaster === true &&
-					verifiedOrgSlugOf(oauthCtx) === undefined
-				) {
-					throw new ProtocolError(
-						ProtocolErrorCode.InvalidRequest,
-						"AUTH_NO_ORG_ID: claim_upload requires a verified organisation (a seat or team-scoped bearer). A master-scope bearer presents none and cannot claim an upload.",
-					);
-				}
 				unresolvedOrgDenial("claim_upload", "kbMutations:claimUpload");
+				// A right is presented, never inferred (Pi ruling, S-28): a master
+				// bearer resolves no organisation, so resolveOrgContext refuses it
+				// here with AUTH_NO_ORG_ID before the door, as for the other KB tools.
+				resolveOrgContext("claim_upload");
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				const result = (await convex.mutation(
 					"kbMutations:claimUpload" as unknown as MutationRef,
