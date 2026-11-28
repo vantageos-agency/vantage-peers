@@ -9,6 +9,9 @@
  * CLERK (a Clerk session: its own identity), NO_ORG (non-master, no verified org, no agent).
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
@@ -25,6 +28,7 @@ import {
 	registerUiResources,
 	type UiResourceConvexClient,
 } from "../src/ui-resources/register.js";
+import { withVerifiedActor } from "../src/verifiedActor.js";
 
 const OPS_AGENT = "agentdedale00000000000000000001";
 const CLIO_ID = "agentclio0000000000000000000001";
@@ -69,6 +73,19 @@ const CLERK: OAuthContext = {
 };
 const NO_ORG: OAuthContext = { ...base };
 
+// server-http.ts hands registerUiResources the client wrapped with withVerifiedActor (the
+// wiring is pinned below, "server-http wires the wrapped client"); these tests pass it the
+// same way, so they read the client the resources really get.
+function asServerHttpPasses(
+	fake: UiResourceConvexClient,
+	ctx: OAuthContext | undefined,
+): UiResourceConvexClient {
+	return withVerifiedActor(
+		fake as unknown as ConvexHttpClient,
+		ctx,
+	) as unknown as UiResourceConvexClient;
+}
+
 // ── 1. memory-quote (resources/read, class A) ───────────────────────────────
 
 // The read gate admits a non-master bearer by its organisation ID (register.ts).
@@ -87,7 +104,7 @@ async function readMemoryQuote(ctx: OAuthContext | undefined) {
 	} as unknown as UiResourceConvexClient;
 	const server = new McpServer({ name: "t", version: "0.0.0" });
 	const master = ctx === undefined || ctx.isMaster;
-	registerUiResources(server, fake, ctx, {
+	registerUiResources(server, asServerHttpPasses(fake, ctx), ctx, {
 		master,
 		callerIdentities: master ? undefined : ctx?.fromAllowList,
 	});
@@ -131,7 +148,7 @@ describe("memory-quote -> memories:listMemories forwards the agent ID the caller
 			},
 		} as unknown as UiResourceConvexClient;
 		const server = new McpServer({ name: "t", version: "0.0.0" });
-		registerUiResources(server, fake, UI_SEAT, {
+		registerUiResources(server, asServerHttpPasses(fake, UI_SEAT), UI_SEAT, {
 			master: false,
 			callerIdentities: ["clio"],
 		});
@@ -467,7 +484,7 @@ async function readUi(ctx: OAuthContext, uri: string) {
 	} as unknown as UiResourceConvexClient;
 	const server = new McpServer({ name: "t", version: "0.0.0" });
 	const master = ctx.isMaster;
-	registerUiResources(server, fake, ctx, {
+	registerUiResources(server, asServerHttpPasses(fake, ctx), ctx, {
 		master,
 		callerIdentities: master ? undefined : ctx.fromAllowList,
 	});
@@ -503,4 +520,24 @@ describe("ui:// primitives: the wrapped fetcher adds the agent ID to VERIFIED_AC
 			});
 		}
 	}
+});
+
+// ── 1c. the wiring: server-http.ts passes the wrapped client ─────────────────────────────
+//
+// buildMcpServer is not exported, so the wiring is read from the source. Fail-closed: exactly
+// one registerUiResources call, and its client argument is withVerifiedActor(convex, oauthCtx).
+describe("server-http wires the wrapped client into registerUiResources", () => {
+	it("the one registerUiResources call passes withVerifiedActor(convex, oauthCtx)", () => {
+		const src = readFileSync(
+			join(dirname(fileURLToPath(import.meta.url)), "..", "server-http.ts"),
+			"utf8",
+		);
+		const all = src.match(/\bregisterUiResources\s*\(/g) ?? [];
+		expect(all.length, "registerUiResources( calls in server-http.ts").toBe(1);
+		const wrapped =
+			src.match(
+				/\bregisterUiResources\s*\(\s*server\s*,\s*withVerifiedActor\s*\(\s*convex\s*,\s*oauthCtx\s*\)\s*,/g,
+			) ?? [];
+		expect(wrapped.length, "the call passes withVerifiedActor(convex, oauthCtx)").toBe(1);
+	});
 });
