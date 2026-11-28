@@ -538,6 +538,9 @@ describe("server-http wires the wrapped client into registerUiResources", () => 
 			src.match(
 				/\bregisterUiResources\s*\(\s*server\s*,\s*withVerifiedActor\s*\(\s*convex\s*,\s*oauthCtx\s*\)\s*,/g,
 			) ?? [];
-		expect(wrapped.length, "the call passes withVerifiedActor(convex, oauthCtx)").toBe(1);
+		expect(
+			wrapped.length,
+			"the call passes withVerifiedActor(convex, oauthCtx)",
+		).toBe(1);
 	});
 });
