@@ -22,6 +22,7 @@ import {
 	ACTOR_CREDENTIAL_MODE_ENV,
 	type OAuthContext,
 } from "../src/auth.js";
+import { DOOR_SCOPE } from "../src/doorScope.js";
 import { registerTools } from "../src/tools.js";
 import { registerKbIngestTools } from "../src/tools/kbIngest.js";
 import {
@@ -369,7 +370,17 @@ for (const site of SITES) {
 				for (const c of r.doorCalls) {
 					if (pin.actor) expect(c.args.verifiedActor).toEqual(pin.actor);
 					else expect(c.args).not.toHaveProperty("verifiedActor");
-					expect(c.args).not.toHaveProperty("verifiedOrg");
+					// The organisation claim follows DOOR_SCOPE (doorScope.ts), read here rather
+					// than restated: a door that applies the verified org inside its read
+					// receives it from a bearer that holds one (a Clerk session carries its own
+					// identity and is sent none), and no other door does.
+					if (
+						DOOR_SCOPE[site.door] !== undefined &&
+						CLASSES[cls]?.clerkOrgSlug !== undefined &&
+						CLASSES[cls]?.clerkJwt === undefined
+					)
+						expect(c.args).toHaveProperty("verifiedOrg");
+					else expect(c.args).not.toHaveProperty("verifiedOrg");
 				}
 			});
 		}

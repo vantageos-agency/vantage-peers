@@ -171,8 +171,8 @@ export function registerUiResources(
 				// URI argument can never replace it. The agent ID is added by the
 				// wrapped client the caller passes (withVerifiedActor), for the
 				// doors in VERIFIED_ACTOR_DOORS only.
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					functionName as any,
 					{
 						...args,
