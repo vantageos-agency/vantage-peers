@@ -114,7 +114,7 @@ export function uiResourceOrgDenial(
 export function uiResourceDoorClaim(
 	oauthCtx: OAuthContext,
 	door: string,
-): DoorScopeArgs {
+): DoorScopeArgs | null {
 	if (isConvexScopedCaller(oauthCtx) || !(door in DOOR_SCOPE)) return {};
 	const verifiedOrgSlug = verifiedOrgSlugOf(oauthCtx);
 	const verifiedOrgId = verifiedOrgIdOf(oauthCtx);
@@ -124,29 +124,25 @@ export function uiResourceDoorClaim(
 		hasVerifiedActor: false,
 		seat: { kind: "none" },
 	});
-	// A denied resolution is refused, typed, never sent claimless: a claimless call to a
-	// door that takes the claim would be served on the service account's broader scope.
-	if ("denied" in resolved) {
-		throw new ProtocolError(
-			ProtocolErrorCode.InvalidRequest,
-			`RBAC_DENIED: the ${door} call of a ui:// resource is refused: the caller's door scope did not resolve (${resolved.denied}). This is a refusal, NOT an empty resource.`,
-			{ code: "RBAC_DENIED", door, reason: "door-scope-denied" },
-		);
-	}
+	// A denied resolution yields NO argument set (null): the caller refuses it with the
+	// typed ui:// refusal, so a door that takes the claim is never called claimless.
+	if ("denied" in resolved) return null;
 	return resolved.args;
 }
 
 /**
  * The arguments a primitive's door call sends: the primitive's own arguments, then the
  * verified claim, set LAST so an argument the primitive passes (from the resource URI or
- * otherwise) can never replace it.
+ * otherwise) can never replace it. Null when the caller's door scope is denied.
  */
 export function uiResourceDoorArgs(
 	oauthCtx: OAuthContext,
 	door: string,
 	args: Record<string, unknown>,
-): Record<string, unknown> {
-	return { ...args, ...uiResourceDoorClaim(oauthCtx, door) };
+): Record<string, unknown> | null {
+	const claim = uiResourceDoorClaim(oauthCtx, door);
+	if (claim === null) return null;
+	return { ...args, ...claim };
 }
 
 export function registerUiResources(
@@ -193,10 +189,14 @@ export function registerUiResources(
 				// URI argument can never replace it. The agent ID is added by the
 				// wrapped client the caller passes (withVerifiedActor), for the
 				// doors in VERIFIED_ACTOR_DOORS only.
+				const doorArgs = uiResourceDoorArgs(ctx, functionName, args);
+				if (doorArgs === null) {
+					throw uiResourceReadRefusal(uri.toString(), "door-scope-denied");
+				}
 				return convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					functionName as any,
-					uiResourceDoorArgs(ctx, functionName, args) as never,
+					doorArgs as never,
 				);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
