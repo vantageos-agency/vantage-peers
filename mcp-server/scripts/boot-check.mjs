@@ -57,9 +57,11 @@ function nextResponse(child, id, timeoutMs = BOOT_TIMEOUT_MS) {
 
 		const onData = (chunk) => {
 			buffer += chunk.toString("utf-8");
-			let newlineIdx;
-			// eslint-disable-next-line no-cond-assign
-			while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+			for (
+				let newlineIdx = buffer.indexOf("\n");
+				newlineIdx !== -1;
+				newlineIdx = buffer.indexOf("\n")
+			) {
 				const line = buffer.slice(0, newlineIdx).trim();
 				buffer = buffer.slice(newlineIdx + 1);
 				if (!line) continue;

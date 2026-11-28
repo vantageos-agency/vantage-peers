@@ -69,9 +69,7 @@ async function listTools() {
 	const waiters = new Map();
 	child.stdout.on("data", (chunk) => {
 		buffer += chunk.toString("utf-8");
-		let i;
-		// eslint-disable-next-line no-cond-assign
-		while ((i = buffer.indexOf("\n")) !== -1) {
+		for (let i = buffer.indexOf("\n"); i !== -1; i = buffer.indexOf("\n")) {
 			const line = buffer.slice(0, i).trim();
 			buffer = buffer.slice(i + 1);
 			if (!line) continue;
