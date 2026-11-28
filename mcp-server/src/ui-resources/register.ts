@@ -23,11 +23,7 @@ import {
 	verifiedOrgIdOf,
 	verifiedOrgSlugOf,
 } from "../doorScope.js";
-import {
-	VERIFIED_ACTOR_DOORS,
-	type VerifiedActorArg,
-	verifiedActorOf,
-} from "../verifiedActor.js";
+import { withVerifiedActor } from "../verifiedActor.js";
 import {
 	listUiResources,
 	readUiResource,
@@ -132,29 +128,20 @@ export function uiResourceDoorClaim(
 	return "denied" in resolved ? {} : resolved.args;
 }
 
-/**
- * The agent ID a primitive's door call carries (S-28), resolved from the verified
- * oauthContext only (verifiedActorOf), for every door in VERIFIED_ACTOR_DOORS: the same
- * claim, under the same rules, as the wrapped client adds to a tool call. A Clerk session
- * carries none (its own identity reaches Convex), nor does a bearer that resolved no
- * agent: it is sent as it was.
- */
-export function uiResourceActorOf(
-	oauthCtx: OAuthContext,
-	door: string,
-): VerifiedActorArg | undefined {
-	return VERIFIED_ACTOR_DOORS.has(door) ? verifiedActorOf(oauthCtx) : undefined;
-}
 
 export function registerUiResources(
 	server: McpServer,
-	convex: UiResourceConvexClient,
+	rawConvex: UiResourceConvexClient,
 	oauthCtx: OAuthContext | undefined,
 	identity: UiResourceCallerIdentity,
 	// The origin this request was served on (resolveIssuer), for the views'
 	// `_meta.ui.domain`. Null when unknown: no domain is declared.
 	publicBaseUrl: string | null = null,
 ): void {
+	// S-28: the same wrapper as registerTools (tools.ts), so a primitive's door call
+	// carries the caller's verified agent ID exactly where a tool call does
+	// (VERIFIED_ACTOR_DOORS, MASTER_ACTOR_CLAIM_DOORS), and nowhere else.
+	const convex = withVerifiedActor(rawConvex, oauthCtx);
 	// Registered with a ResourceTemplate so that resources/list (via
 	// listCallback) and resources/read both work.
 	// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
@@ -183,18 +170,15 @@ export function registerUiResources(
 				functionName: string,
 				args: Record<string, unknown>,
 			) => {
-				// The caller's verified claim rides every door that takes one; set
-				// last so a URI-derived argument can never replace it.
-				const verifiedActor = uiResourceActorOf(ctx, functionName);
+				// The organisation claim is set after the URI-derived arguments, so a
+				// URI argument can never replace it. The agent ID is added by the
+				// wrapped client (withVerifiedActor, as for a tool call), for the
+				// doors in VERIFIED_ACTOR_DOORS only.
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				return convex.query(
-					functionName as any,
-					{
-						...args,
-						...uiResourceDoorClaim(ctx, functionName),
-						...(verifiedActor !== undefined ? { verifiedActor } : {}),
-					} as never,
-				);
+				return convex.query(functionName as any, {
+					...args,
+					...uiResourceDoorClaim(ctx, functionName),
+				} as never);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
 			// (server-http.ts) from the verified oauthCtx, as before the extraction.
