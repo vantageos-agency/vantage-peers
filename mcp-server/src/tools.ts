@@ -3941,6 +3941,7 @@ export function registerTools(
 				}
 				const rawList = (memories as any).value;
 
+				// Kept after #1821: the door narrows by org only; this still narrows a namespace admitted as the org's team or the caller's own (not a read prefix) to rows whose createdBy is on the bearer's roster.
 				const filteredList = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					rawList,
@@ -4170,6 +4171,7 @@ export function registerTools(
 								createdBy: (profile as Record<string, unknown>)
 									.orchestratorId as string | undefined,
 							};
+				// Kept after #1821: the door checks the org's roster (and none for a bearer with no org); this still requires the orchestrator on the bearer's own, possibly narrower, roster.
 				const scoped = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					profileWithCreatedBy as any,
@@ -4384,6 +4386,7 @@ export function registerTools(
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only rows whose createdBy ∈ fromAllowList OR whose namespace
 				// matches one of namespaceReadPrefixes (exact or '/' boundary).
+				// Kept after #1821: the door narrows by org only; this still narrows a namespace admitted as the org's team or the caller's own (not a read prefix) to rows whose createdBy is on the bearer's roster.
 				const filteredList = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					rawList,
@@ -13161,6 +13164,7 @@ export function registerTools(
 				if (row === null || row === undefined) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
 				}
+				// Kept after #1821: with a verifiedActor the door judges the creator by agent ID and skips callerIdentities; this still requires the creator's label on the bearer's roster.
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {
 					// The row exists and this caller's roster does not name its creator:
