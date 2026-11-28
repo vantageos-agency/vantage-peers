@@ -333,6 +333,7 @@ _Applies to: Cloud and Self-host._
 
 - **Annotations.** Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. A tool marked read-only is checked against what its handler does.
 - **Paging.** Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor. `get_github_owner_bindings` takes `limit`, `cursor` and `unprovenCursor` and returns `nextCursor` and `unprovenNextCursor`.
+- **8.0.0 behaviours.** `claim_upload` refuses a master bearer that presents no organisation with `AUTH_NO_ORG_ID` (#1828). `update_briefing_note` forwards the caller's verified organisation to a door that applies it inside the write (#1826). A denied door scope on a `ui://` read is refused with `RBAC_DENIED` before any backend call (#1831). On Self-host, the backend contract required is 39.
 - **7.2.0 behaviours.** `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` forward the caller's verified organisation to doors that apply it inside the read (#1821); `get_mission_template` forwards a no-organisation caller's roster (#1822); the `ui://` resources carry the caller's verified agent ID where a tool call does (#1820); `get_tool_usage` with no argument from a master seat with a verified agent ID reads its own usage (#1824). On Self-host, the backend contract required is 38.
 - **7.1.0 behaviours.** Every registered tool declares an `outputSchema` and returns `structuredContent` on success, and a registration without an `outputSchema` fails at registration. `get_issue` and `issue_stats` check the caller's scope before the master-only read (#1815). `get_mission_template` forwards the caller's verified organisation to the template door (#1818). On Self-host, the backend contract required is 36 (#1813, #1818).
 - **7.0.0 behaviours.** The five Knowledge Base tools refuse a bearer with no verified organisation unless it is the master or a Clerk session (#1804). `list_bus` pages beyond the first are reachable with the `nextCursor` it returns, and `list_bus` and `list_repo_mappings` refuse a cursor of an unknown shape instead of restarting at page 1 (#1807).
@@ -412,6 +413,15 @@ Before it serves anything, the server asks your backend for its contract manifes
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
 
 ## Release notes
+
+### 8.0.0
+
+_Applies to: Cloud and Self-host._ A major release: `claim_upload` refuses a master bearer that presents no organisation, which 7.2.0 accepted; Self-host requires backend contract 39. No tool or argument is removed and no output shape changes.
+
+- Breaking, Cloud and Self-host: `claim_upload` refuses a master bearer that resolves no organisation with `AUTH_NO_ORG_ID`; the backend door refuses a service-account call with no organisation with `RBAC_DENIED`. Seats, Clerk sessions and a master presenting an organisation are served as before. Upgrade note: a master that claims uploads presents the organisation the upload belongs to (#1828).
+- Self-host: the backend contract required moves from 38 to 39; the called functions are unchanged. Upgrade note: deploy the backend of this release first, then upgrade this package; a backend below contract 39 is refused at start. Cloud clients have nothing to upgrade or configure: the Cloud backend is deployed by the platform (#1826).
+- Cloud and Self-host: `update_briefing_note` forwards the caller's verified organisation; the door applies it inside the write; answers unchanged (#1826).
+- Cloud and Self-host: a denied door scope on a `ui://` read is refused typed before any backend call, and the caller's claim is set after every other argument (#1831). The after-read scope checks of `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` are kept and pinned per caller class (#1832).
 
 ### 7.2.0
 

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [8.0.0] — 2026-11-28
+
+A major release: `claim_upload` refuses a master bearer that presents no organisation, which it accepted in 7.2.0, and Self-host requires backend contract 39. This is a major release because a credential stops being accepted by a tool (see the package's [Versioning](README.md#versioning) rules). No tool or argument is removed and no output shape changes. Each entry names the product it concerns.
+
+### Breaking
+
+- Cloud and Self-host: `claim_upload` refuses a master bearer that resolves no organisation with `AUTH_NO_ORG_ID` before the backend call, the same coded refusal the other Knowledge Base tools give; the backend door `kbMutations:claimUpload` refuses a service-account call with no `verifiedOrg` with `RBAC_DENIED`. 7.2.0 served that call as the master and bound the blob to the ticket's organisation. Seats (which carry their organisation), Clerk sessions and a master presenting an organisation are served as before. Upgrade note: a master that claims uploads presents the organisation the upload belongs to (#1828). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Changed
+
+- Self-host: the server requires backend contract version 39 (7.2.0: 38); the called functions are unchanged. A backend below contract 39 is refused at start. Upgrade note: deploy the backend of this release first, then upgrade this package. Cloud clients have nothing to upgrade or configure: the Cloud backend is deployed by the platform (#1826). ([Backend compatibility check](README.md#backend-compatibility-check))
+- Cloud and Self-host: `update_briefing_note` forwards the caller's verified organisation to `briefingNotes:update`, which applies it inside the write: the note must belong to that organisation and the acting name must be on its roster. A foreign note was already refused with `RBAC_DENIED` and still is; every other answer is unchanged (#1826). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Fixed
+
+- Cloud and Self-host: a `ui://vp/v1/*` resource read whose door-scope resolution is denied is refused with the typed `RBAC_DENIED` (`door-scope-denied`) before any backend call; it was never reachable with today's callers, but would have sent the call without the caller's claim. The caller's verified claim is set after every other argument, so an argument carried by the URI never replaces it (#1831). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: the after-read scope checks on `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` are kept: each still enforces something the door does not (the roster in a team or own namespace, a seat's roster narrower than its organisation's, a creator's label), and each is pinned per caller class; answers unchanged (#1832). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [7.2.0] — 2026-11-28
 
 A minor release: Self-host requires backend contract 38, four tools forward the caller's verified organisation to doors that now decide it inside the read, and `get_mission_template`, the `ui://` resources, `list_blocked_on_me` and `get_tool_usage` carry the caller's verified claim where it was missing. This is a minor release because no tool or argument is removed, no success becomes an error and no working credential is refused (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
