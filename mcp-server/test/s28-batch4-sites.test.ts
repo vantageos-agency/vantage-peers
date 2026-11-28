@@ -10,10 +10,7 @@
  */
 
 import { Client } from "@modelcontextprotocol/client";
-import {
-	InMemoryTransport,
-	McpServer,
-} from "@modelcontextprotocol/server";
+import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -347,12 +344,9 @@ for (const site of SITES) {
 	describe(`${site.tool} -> ${site.door}: the answer of each caller class`, () => {
 		for (const [cls, pin] of Object.entries(site.pins)) {
 			it(`${cls}: ${pin.called ? "door called" : "refused before the door"}${pin.actor ? ", actor forwarded" : ", no actor"}`, async () => {
-				const r = await callTool(
-					site.tool,
-					site.door,
-					CLASSES[cls],
-					{ ...site.args },
-				);
+				const r = await callTool(site.tool, site.door, CLASSES[cls], {
+					...site.args,
+				});
 				expect(r.doorCalls.length > 0, r.text).toBe(pin.called);
 				if (pin.refused !== undefined) expect(r.refused).toBe(pin.refused);
 				for (const c of r.doorCalls) {
@@ -368,7 +362,10 @@ for (const site of SITES) {
 // ── 3. the KB sites (kbIngest.ts), master class ─────────────────────────────
 
 function kbSetup(ctx: OAuthContext | undefined) {
-	const handlers = new Map<string, (a: Record<string, unknown>) => Promise<unknown>>();
+	const handlers = new Map<
+		string,
+		(a: Record<string, unknown>) => Promise<unknown>
+	>();
 	const server = {
 		tool: () => undefined,
 		registerTool: (
@@ -380,7 +377,9 @@ function kbSetup(ctx: OAuthContext | undefined) {
 		},
 	};
 	const action = vi.fn().mockResolvedValue({ docId: "d", chunkCount: 1 });
-	const mutation = vi.fn().mockResolvedValue({ storageId: "sid", orgId: "org-A" });
+	const mutation = vi
+		.fn()
+		.mockResolvedValue({ storageId: "sid", orgId: "org-A" });
 	registerKbIngestTools(
 		server as never,
 		{ action, mutation } as unknown as ConvexHttpClient,
@@ -391,7 +390,10 @@ function kbSetup(ctx: OAuthContext | undefined) {
 
 describe("kbIngest.ts: the master is refused before the door where it would be sent claimless", () => {
 	const SITES_KB = [
-		{ tool: "store_document_chunked", args: { storageId: "s", mimeType: "text/markdown", filename: "a.md" } },
+		{
+			tool: "store_document_chunked",
+			args: { storageId: "s", mimeType: "text/markdown", filename: "a.md" },
+		},
 		{ tool: "soft_delete_document", args: { docId: "d" } },
 		{ tool: "generate_upload_url", args: {} },
 		{ tool: "generate_upload_url", args: { sha256: "a".repeat(64) } },
@@ -410,7 +412,10 @@ describe("kbIngest.ts: the master is refused before the door where it would be s
 		const k = kbSetup(MASTER);
 		await k.handlers.get("claim_upload")?.({ storageId: "sid", ticket: "t" });
 		expect(k.mutation).toHaveBeenCalledTimes(1);
-		const [door, args] = k.mutation.mock.calls[0] as [string, Record<string, unknown>];
+		const [door, args] = k.mutation.mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		];
 		expect(door).toBe("kbMutations:claimUpload");
 		expect(args).not.toHaveProperty("verifiedOrg");
 	});
