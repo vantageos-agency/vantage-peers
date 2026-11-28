@@ -505,6 +505,7 @@ async function checkTaskClaims(
 		try {
 			task = await deps.convexQuery(deps.taskQueryName ?? "tasks:get", {
 				taskId,
+				...(deps.taskScopeArgs ?? {}),
 			});
 		} catch (err) {
 			warn(

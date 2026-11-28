@@ -36,6 +36,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
+import { verifiedOrgDoorArgs } from "../doorScope.js";
 import { importOkfBundleServedOutputSchema } from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
@@ -116,6 +117,7 @@ export function registerImportOkfBundle(
 						targetNamespace,
 						mode,
 						idempotencyKey,
+						...verifiedOrgDoorArgs(oauthCtx, "okfBundleNode:importOkfBundle"),
 					},
 				)) as ImportOkfBundleResult;
 

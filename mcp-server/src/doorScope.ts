@@ -141,6 +141,39 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"toolUsage:record": { verifiedPerson: true, verifiedOrg: "always" },
 	"toolUsage:getToolUsage": { verifiedPerson: true, verifiedOrg: "always" },
 	"toolUsage:usageByOwner": { verifiedPerson: true, verifiedOrg: "always" },
+	// S-28 expand (task k17bcj237901qqfghbzsnj13258k0adb): the 31 doors that took
+	// no claim argument. Each takes `verifiedOrg` now (claimless stays served).
+	"tasks:get": { verifiedOrg: "always" },
+	"missions:list": { verifiedOrg: "always" },
+	"okfBundleNode:importOkfBundle": { verifiedOrg: "always" },
+	"okfBundleNode:validateOkfBundle": { verifiedOrg: "always" },
+	"orgRoster:getMyOrgRoster": { verifiedOrg: "always" },
+	"orgRoster:getForAccessToken": { verifiedOrg: "always" },
+	"memories:softDeleteMemory": { verifiedOrg: "always" },
+	"memories:redactMemoryContent": { verifiedOrg: "always" },
+	"tasks:billingSummaryByProject": { verifiedOrg: "always" },
+	"tasks:listByMission": { verifiedOrg: "always" },
+	"missions:updateStatus": { verifiedOrg: "always" },
+	"recurringTasks:list": { verifiedOrg: "always" },
+	"recurringTasks:pause": { verifiedOrg: "always" },
+	"recurringTasks:resume": { verifiedOrg: "always" },
+	"recurringTasks:remove": { verifiedOrg: "always" },
+	"recurringTasks:update": { verifiedOrg: "always" },
+	"mandates:list": { verifiedOrg: "always" },
+	"mandates:get": { verifiedOrg: "always" },
+	"issues:listByOrchestrator": { verifiedOrg: "always" },
+	"issues:listByProject": { verifiedOrg: "always" },
+	"issues:listByStatus": { verifiedOrg: "always" },
+	"issues:getByRepoNumber": { verifiedOrg: "always" },
+	"issues:getStats": { verifiedOrg: "always" },
+	"fixPatterns:listByProject": { verifiedOrg: "always" },
+	"fixPatterns:listAll": { verifiedOrg: "always" },
+	"missionTemplates:upsert": { verifiedOrg: "always" },
+	"missionTemplates:instantiateTemplateIntoMission": { verifiedOrg: "always" },
+	"missionTemplates:softDelete": { verifiedOrg: "always" },
+	"errorMonitor:listErrors": { verifiedOrg: "always" },
+	"errorMonitor:getError": { verifiedOrg: "always" },
+	"githubRepoMapping:getByRepo": { verifiedOrg: "always" },
 };
 
 /**
@@ -178,6 +211,29 @@ export function verifiedOrgIdOf(
 ): string | undefined {
 	const id = oauthCtx?.orgClerkId;
 	return id === undefined || id === "" ? undefined : id;
+}
+
+/**
+ * The scope arguments `door` is handed for a tool that holds the verified
+ * oauthContext but not the registerTools closure (a tool file of its own). Same
+ * resolver, same facts as the closure's `doorScopeArgs`: only the organisation
+ * claim, from the verified context, never from an argument. A door with no
+ * `verifiedOrg` rule yields nothing.
+ */
+export function verifiedOrgDoorArgs(
+	oauthCtx: OAuthContext | undefined,
+	door: string,
+): DoorScopeArgs {
+	const verifiedOrgSlug = verifiedOrgSlugOf(oauthCtx);
+	const verifiedOrgId = verifiedOrgIdOf(oauthCtx);
+	const resolved = resolveDoorScope(door, undefined, {
+		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+		...(verifiedOrgId !== undefined ? { verifiedOrgId } : {}),
+		hasVerifiedActor: false,
+		seat: { kind: "none" },
+	});
+	if ("denied" in resolved) throw new Error(resolved.denied);
+	return resolved.args;
 }
 
 /** What the verified oauthContext says about the caller. Never a tool argument. */

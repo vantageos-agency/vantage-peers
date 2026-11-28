@@ -21,6 +21,8 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
+import type { OAuthContext } from "../auth.js";
+import { verifiedOrgDoorArgs } from "../doorScope.js";
 import { validateOkfBundleServedOutputSchema } from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
@@ -76,6 +78,7 @@ export const validateOkfBundleArgsSchema = {
 export function registerValidateOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
+	oauthCtx?: OAuthContext,
 ): void {
 	defineTool(
 		server,
@@ -109,6 +112,7 @@ export function registerValidateOkfBundle(
 					{
 						bundleUrl: bundleUrl ?? null,
 						storageId: storageId ?? null,
+						...verifiedOrgDoorArgs(oauthCtx, "okfBundleNode:validateOkfBundle"),
 					},
 				)) as ValidateOkfBundleResult;
 

@@ -2899,14 +2899,17 @@ export function registerTools(
 					return convex.query(
 						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 						"orgRoster:getMyOrgRoster" as any,
-						{},
+						{ ...doorScopeArgs("orgRoster:getMyOrgRoster", undefined) },
 					) as Promise<string[]>;
 				}
 				if (oauthCtx?.accessTokenHash) {
 					return convex.query(
 						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 						"orgRoster:getForAccessToken" as any,
-						{ tokenHash: oauthCtx.accessTokenHash },
+						{
+							tokenHash: oauthCtx.accessTokenHash,
+							...doorScopeArgs("orgRoster:getForAccessToken", undefined),
+						},
 					) as Promise<string[]>;
 				}
 				return [];
@@ -3178,6 +3181,7 @@ export function registerTools(
 
 				await convex.mutation("memories:softDeleteMemory" as any, {
 					memoryId,
+					...doorScopeArgs("memories:softDeleteMemory", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -3243,7 +3247,11 @@ export function registerTools(
 				if (authCtx.oauthCtx?.clerkJwt !== undefined) {
 					const result = await convex.mutation(
 						"memories:redactMemoryContent" as any,
-						{ memoryId, redactions },
+						{
+							memoryId,
+							redactions,
+							...doorScopeArgs("memories:redactMemoryContent", undefined),
+						},
 					);
 					return {
 						content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -4567,6 +4575,7 @@ export function registerTools(
 						convexQuery: (name, args) => convex.query(name as any, args),
 						now: () => new Date(),
 						githubToken: process.env.GITHUB_TOKEN,
+						taskScopeArgs: doorScopeArgs("tasks:get", undefined),
 					});
 				} catch (tokenError) {
 					if (tokenError instanceof StateTokenError) {
@@ -4603,6 +4612,7 @@ export function registerTools(
 						convexQuery: (name, args) => convex.query(name as any, args),
 						now: () => new Date(),
 						githubToken: process.env.GITHUB_TOKEN,
+						taskScopeArgs: doorScopeArgs("tasks:get", undefined),
 						defaultRepo: process.env.STATE_TOKENS_DEFAULT_REPO,
 						warn: (message) => unverified.push(message),
 					});
@@ -6458,6 +6468,7 @@ export function registerTools(
 						endDate: to ?? Date.now(),
 						...(project !== undefined ? { project } : {}),
 						...(listNoDuration !== undefined ? { listNoDuration } : {}),
+						...doorScopeArgs("tasks:billingSummaryByProject", undefined),
 					},
 				);
 				// The same object is the text (unchanged) and the structuredContent the
@@ -7592,6 +7603,7 @@ export function registerTools(
 					createdBy,
 					updatedSince,
 					createdBefore,
+					...doorScopeArgs("tasks:listByMission", undefined),
 				});
 
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
@@ -7838,6 +7850,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 					updatedSince,
 					createdBefore,
+					...doorScopeArgs("missions:list", undefined),
 				});
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
@@ -8078,6 +8091,7 @@ export function registerTools(
 				await convex.mutation("missions:updateStatus" as any, {
 					missionId: missionId as any,
 					status,
+					...doorScopeArgs("missions:updateStatus", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9133,6 +9147,7 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: "lite",
 					createdBefore,
+					...doorScopeArgs("recurringTasks:list", undefined),
 				});
 				const recurringRows = requireRows(tasks, "list_recurring_tasks", "recurringTasks:list", "an array of recurring tasks");
 				const filteredTasks = scopeFilterList(
@@ -9202,6 +9217,7 @@ export function registerTools(
 			try {
 				const result = await convex.mutation("recurringTasks:pause" as any, {
 					taskId: taskId as any,
+					...doorScopeArgs("recurringTasks:pause", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9253,6 +9269,7 @@ export function registerTools(
 			try {
 				const result = await convex.mutation("recurringTasks:resume" as any, {
 					taskId: taskId as any,
+					...doorScopeArgs("recurringTasks:resume", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9307,6 +9324,7 @@ export function registerTools(
 			try {
 				const result = await convex.mutation("recurringTasks:remove" as any, {
 					taskId: taskId as any,
+					...doorScopeArgs("recurringTasks:remove", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9413,6 +9431,7 @@ export function registerTools(
 				const result = await convex.mutation("recurringTasks:update" as any, {
 					recurringTaskId: recurringTaskId as any,
 					...fields,
+					...doorScopeArgs("recurringTasks:update", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
@@ -9958,6 +9977,7 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
+					...doorScopeArgs("mandates:list", undefined),
 				});
 				// A refusal is not an absence: say so BEFORE the `Array.isArray`
 				// coalescing below turns the envelope into an empty array.
@@ -11226,6 +11246,7 @@ export function registerTools(
 						limit: requestedLimit,
 						fields: fields ?? "lite",
 						createdBefore,
+						...doorScopeArgs("issues:listByOrchestrator", undefined),
 					});
 				} else if (project) {
 					results = await convex.query("issues:listByProject" as any, {
@@ -11234,6 +11255,7 @@ export function registerTools(
 						limit: requestedLimit,
 						fields: fields ?? "lite",
 						createdBefore,
+						...doorScopeArgs("issues:listByProject", undefined),
 					});
 				} else if (status) {
 					results = await convex.query("issues:listByStatus" as any, {
@@ -11241,6 +11263,7 @@ export function registerTools(
 						limit: requestedLimit,
 						fields: fields ?? "lite",
 						createdBefore,
+						...doorScopeArgs("issues:listByStatus", undefined),
 					});
 				} else {
 					results = await convex.query("issues:listByProject" as any, {
@@ -11248,6 +11271,7 @@ export function registerTools(
 						limit: requestedLimit,
 						fields: fields ?? "lite",
 						createdBefore,
+						...doorScopeArgs("issues:listByProject", undefined),
 					});
 				}
 
@@ -11324,6 +11348,7 @@ export function registerTools(
 					? await convex.query("issues:getByRepoNumber" as any, {
 							repo,
 							issueNumber,
+							...doorScopeArgs("issues:getByRepoNumber", undefined),
 						})
 					: null;
 
@@ -11543,6 +11568,7 @@ export function registerTools(
 				const filteredStats = mayReadMasterOnlyDoor(oauthCtx)
 					? await convex.query("issues:getStats" as any, {
 							project,
+							...doorScopeArgs("issues:getStats", undefined),
 						})
 					: null;
 
@@ -11935,6 +11961,7 @@ export function registerTools(
 							limit: requestedLimit,
 							fields: "lite",
 							createdBefore,
+							...doorScopeArgs("fixPatterns:listByProject", undefined),
 						},
 					);
 					const projectRows = requireRows(results, "list_fix_patterns", "fixPatterns:listByProject", "an array of fix patterns");
@@ -11954,6 +11981,7 @@ export function registerTools(
 					limit: requestedLimit,
 					fields: "lite",
 					createdBefore,
+					...doorScopeArgs("fixPatterns:listAll", undefined),
 				});
 				const allRows = requireRows(allResults, "list_fix_patterns", "fixPatterns:listAll", "an array of fix patterns");
 				const filteredAll = scopeFilterList(
@@ -12179,6 +12207,7 @@ export function registerTools(
 						steps,
 						createdBy,
 						isDefault,
+						...doorScopeArgs("missionTemplates:upsert", undefined),
 					},
 				);
 
@@ -12287,6 +12316,7 @@ export function registerTools(
 						context,
 						titlePrefix,
 						callerOrchestrator,
+						...doorScopeArgs("missionTemplates:instantiateTemplateIntoMission", undefined),
 					},
 				);
 
@@ -12352,6 +12382,7 @@ export function registerTools(
 				await convex.mutation("missionTemplates:softDelete" as any, {
 					templateId: templateId as any,
 					name,
+					...doorScopeArgs("missionTemplates:softDelete", undefined),
 				});
 
 				const structured = { deleted: true, templateId, name };
@@ -12583,6 +12614,7 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
+					...doorScopeArgs("errorMonitor:listErrors", undefined),
 				});
 				const filteredErrors = requireRows(errors, "list_errors", "errorMonitor:listErrors", "an array of errors");
 
@@ -12668,6 +12700,7 @@ export function registerTools(
 				// per-row scope filter needed (errorLogs has no owner field).
 				const error = await convex.query("errorMonitor:getError" as any, {
 					errorId: errorId as any,
+					...doorScopeArgs("errorMonitor:getError", undefined),
 				});
 				const filteredError = error;
 				// An entry that is not there is a success: its text is null and
@@ -13217,6 +13250,7 @@ export function registerTools(
 				// no createdBy-remap workaround needed.
 				const row = (await convex.query("mandates:get" as any, {
 					mandateId,
+					...doorScopeArgs("mandates:get", undefined),
 				})) as
 					| (Record<string, unknown> & {
 							createdBy?: string;
@@ -13282,6 +13316,7 @@ export function registerTools(
 			try {
 				const row = await convex.query("githubRepoMapping:getByRepo" as any, {
 					repo,
+					...doorScopeArgs("githubRepoMapping:getByRepo", undefined),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// githubRepoMapping rows (schema.ts:482) carry `orchestrator`, NOT
@@ -13479,7 +13514,7 @@ export function registerTools(
 	// Thin proxy to convex action `okfBundleNode:validateOkfBundle`. Read-only;
 	// validates bundle conformance per RFC §3.5 without importing it. Mission
 	// k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
-	registerValidateOkfBundle(server, convex);
+	registerValidateOkfBundle(server, convex, oauthCtx);
 
 	// ── import_okf_bundle (B2 — OKF Phase 2-B) ────────────────────────────────
 	// Thin proxy to convex action `okfBundleNode:importOkfBundle`. Mutation;

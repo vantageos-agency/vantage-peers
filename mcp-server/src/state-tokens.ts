@@ -44,6 +44,11 @@ export interface StateTokenResolutionDeps {
 	now: () => Date;
 	/** Optional GitHub token for higher rate limits / private repos. */
 	githubToken?: string;
+	/**
+	 * The door-scope arguments `tasks:get` is handed (doorScope.ts DOOR_SCOPE):
+	 * the caller's verified organisation claim, set by the tool, never typed.
+	 */
+	taskScopeArgs?: Record<string, unknown>;
 }
 
 /**
@@ -284,7 +289,10 @@ async function resolveTask(
 
 	let task: unknown;
 	try {
-		task = await deps.convexQuery("tasks:get", { taskId });
+		task = await deps.convexQuery("tasks:get", {
+			taskId,
+			...(deps.taskScopeArgs ?? {}),
+		});
 	} catch (err) {
 		throw new StateTokenError(
 			"task",
