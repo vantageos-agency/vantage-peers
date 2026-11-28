@@ -24,7 +24,7 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `7.1.0` | `grep '"version"' mcp-server/package.json` -> `"version": "7.1.0"` |
+| Package version | `7.2.0` | `grep '"version"' mcp-server/package.json` -> `"version": "7.2.0"` |
 | npm published version | read it at deploy time (registry state, not held on this page) | `npm view vantage-peers-mcp dist-tags` |
 | Tools **registered** by the server | `123` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 123`, `registered names 123 vs documented names 123` |
 | Tools **advertised** to MCP clients (`tools/list`) | `97` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `97`; `grep -n 'tools are advertised' mcp-server/README.md` -> "97 tools are advertised to clients" |
@@ -41,7 +41,7 @@ tools stay registered but a client can neither list nor call them
 around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
-Not the same as the published release: the numbers 123 / 97 / contract 36 /
+Not the same as the published release: the numbers 123 / 97 / contract 38 /
 155 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`). The published npm
@@ -188,7 +188,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "7.1.0",
+  "version": "7.2.0",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",

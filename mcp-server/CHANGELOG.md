@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [7.2.0] — 2026-11-28
+
+A minor release: Self-host requires backend contract 38, four tools forward the caller's verified organisation to doors that now decide it inside the read, and `get_mission_template`, the `ui://` resources, `list_blocked_on_me` and `get_tool_usage` carry the caller's verified claim where it was missing. This is a minor release because no tool or argument is removed, no success becomes an error and no working credential is refused (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
+
+### Changed
+
+- Self-host: the server requires backend contract version 38 (7.1.0: 36); the 155 called functions are unchanged. A backend below contract 38 is refused at start. Upgrade note: deploy the backend of this release first, then upgrade this package. Cloud clients have nothing to upgrade or configure: the Cloud backend is deployed by the platform (#1821, #1822). ([Backend compatibility check](README.md#backend-compatibility-check))
+- Cloud and Self-host: `list_memories`, `list_episodes`, `get_profile` and `get_fix_pattern` forward the caller's verified organisation to `memories:listMemories`, `profiles:getProfile` and `fixPatterns:get`, which apply it inside the read. Every caller's answer is unchanged, with one wording difference: `get_fix_pattern` on a pattern created outside the caller's roster was already refused with `RBAC_DENIED` after the read and is now refused by the door with `RBAC_DENIED` (`not-in-creator-roster`), so the refusal text is the door's message (#1821). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `get_mission_template` forwards the caller's roster to `missionTemplates:getByName` for a caller with no verified organisation, and the door applies it inside the read; every caller's answer is unchanged (#1822). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Fixed
+
+- Cloud and Self-host: the `ui://vp/v1/*` resources call the backend through the same wrapped client as the tools, so `ui://vp/v1/memory-quote` carries the caller's verified agent ID to `memories:listMemories` as a tool call does; the seven other doors the resources read receive no agent ID, as before. `list_blocked_on_me` states the claim at its call; its answers are unchanged (#1820). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `get_tool_usage` with no argument from a master seat that holds a verified agent ID reads that agent's own usage; it answered `caller-unidentified` before. A master naming a `caller` or an `orgSlug`, a master with no agent ID, `get_owner_tool_usage`, client seats and Clerk sessions send what they sent before (#1824). ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [7.1.0] — 2026-11-27
 
 A minor release: every registered tool now declares an `outputSchema` and returns `structuredContent`; Self-host requires backend contract 36. This is a minor release because the changes add fields and keep every text, success and error as it was (see the package's [Versioning](README.md#versioning) rules). Each entry names the product it concerns.
