@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **VantagePeers Cloud and Self-host: a `ui://` resource whose door-scope resolution is denied is refused, typed, instead of calling the door without its claim (task k175k3waf1ercagjhcjqvdfk7d8k107r, minos's corrections on #1801).** `uiResourceDoorClaim` returned no claim on a denied resolution, so the door would have been called claimless (unreachable today: the resource path resolves with no seat). It now throws `RBAC_DENIED` (`door-scope-denied`). The fetcher builds its arguments through the new `uiResourceDoorArgs`, which sets the verified claim after the primitive's own arguments; a test now calls it directly with a foreign `verifiedOrg`, so the "claim last" order is pinned where the resource-level test could not bite (the primitives filter URI params first). No answer changes for any caller today.

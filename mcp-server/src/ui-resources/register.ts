@@ -124,7 +124,29 @@ export function uiResourceDoorClaim(
 		hasVerifiedActor: false,
 		seat: { kind: "none" },
 	});
-	return "denied" in resolved ? {} : resolved.args;
+	// A denied resolution is refused, typed, never sent claimless: a claimless call to a
+	// door that takes the claim would be served on the service account's broader scope.
+	if ("denied" in resolved) {
+		throw new ProtocolError(
+			ProtocolErrorCode.InvalidRequest,
+			`RBAC_DENIED: the ${door} call of a ui:// resource is refused: the caller's door scope did not resolve (${resolved.denied}). This is a refusal, NOT an empty resource.`,
+			{ code: "RBAC_DENIED", door, reason: "door-scope-denied" },
+		);
+	}
+	return resolved.args;
+}
+
+/**
+ * The arguments a primitive's door call sends: the primitive's own arguments, then the
+ * verified claim, set LAST so an argument the primitive passes (from the resource URI or
+ * otherwise) can never replace it.
+ */
+export function uiResourceDoorArgs(
+	oauthCtx: OAuthContext,
+	door: string,
+	args: Record<string, unknown>,
+): Record<string, unknown> {
+	return { ...args, ...uiResourceDoorClaim(oauthCtx, door) };
 }
 
 export function registerUiResources(
@@ -174,10 +196,7 @@ export function registerUiResources(
 				return convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					functionName as any,
-					{
-						...args,
-						...uiResourceDoorClaim(ctx, functionName),
-					} as never,
+					uiResourceDoorArgs(ctx, functionName, args) as never,
 				);
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
