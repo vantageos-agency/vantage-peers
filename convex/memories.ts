@@ -459,6 +459,16 @@ export const listMemories = query({
     //     app components hooks lib contexts providers  -> 0 hits
     // The omitted-namespace path did not exist (the argument was required).
     if (args.namespace === undefined) {
+      // A verifiedOrg claim makes the caller a member of that organisation: the
+      // fleet standing below is read from the transport identity (the service
+      // account), not from this scope, so the member refusal is said here, by the
+      // one helper, before that standing can admit the read.
+      if (args.verifiedOrg !== undefined) {
+        requireResolvedCaller(scope, "memories:listMemories", {
+          masterOnly: true,
+          alsoRefusePreOrg: true,
+        });
+      }
       await requireFleetDoor(ctx, scope, "memories:listMemories", {
         masterOnly: true,
         alsoRefusePreOrg: true,
