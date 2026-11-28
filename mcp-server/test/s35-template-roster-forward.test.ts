@@ -33,34 +33,36 @@ const orgCtx = (): OAuthContext => ({
 	orgClerkId: "org_A1",
 });
 
+type ToolArgs = Record<string, unknown>;
+type ToolResult = { content: { text: string }[] };
+type Handler = (a: ToolArgs) => Promise<ToolResult>;
+type DoorCall = { path: string; args: Record<string, unknown> };
+
 async function call(ctx: OAuthContext, row: unknown) {
-	const handlers = new Map<string, (a: any) => any>();
-	const queries: { path: string; args: any }[] = [];
+	const handlers = new Map<string, Handler>();
+	const queries: DoorCall[] = [];
 	const server = {
-		tool: (
-			n: string,
-			_d: string,
-			_s: unknown,
-			_a: unknown,
-			h: (a: any) => any,
-		) => handlers.set(n, h),
-		registerTool: (n: string, _c: unknown, h: (a: any) => any) =>
+		tool: (n: string, _d: string, _s: unknown, _a: unknown, h: Handler) =>
 			handlers.set(n, h),
-	} as any;
+		registerTool: (n: string, _c: unknown, h: Handler) => handlers.set(n, h),
+	} as unknown as Parameters<typeof registerTools>[0];
 	const convex = {
-		query: async (path: string, args: any) => {
+		query: async (path: string, args: Record<string, unknown>) => {
 			queries.push({ path, args });
 			return row;
 		},
 		mutation: async () => null,
 		action: async () => null,
-	} as any;
+	} as unknown as Parameters<typeof registerTools>[1];
 	registerTools(server, convex, ctx);
-	const res = await handlers.get("get_mission_template")!({ name: "t" });
-	return {
-		res,
-		door: queries.find((q) => q.path === "missionTemplates:getByName")!,
-	};
+	const handler = handlers.get("get_mission_template");
+	if (handler === undefined)
+		throw new Error("get_mission_template not registered");
+	const res = await handler({ name: "t" });
+	const door = queries.find((q) => q.path === "missionTemplates:getByName");
+	if (door === undefined)
+		throw new Error("missionTemplates:getByName not called");
+	return { res, door };
 }
 
 describe("get_mission_template forwards callerRoster", () => {
