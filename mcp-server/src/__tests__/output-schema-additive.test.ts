@@ -51,7 +51,9 @@ function closedObjects(schema: unknown, path: string, out: string[]): void {
 	if (node.additionalProperties === false) out.push(path);
 	for (const [key, value] of Object.entries(node)) {
 		if (Array.isArray(value)) {
-			value.forEach((v, i) => closedObjects(v, `${path}.${key}[${i}]`, out));
+			for (const [i, v] of value.entries()) {
+				closedObjects(v, `${path}.${key}[${i}]`, out);
+			}
 		} else if (value !== null && typeof value === "object") {
 			closedObjects(value, `${path}.${key}`, out);
 		}
