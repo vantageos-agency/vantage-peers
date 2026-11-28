@@ -129,10 +129,23 @@ async function lookupByRepo(
 // Server-side callers (convex/http.ts webhook, convex/issues.ts) run with NO
 // identity and use `getByRepoInternal` below.
 export const getByRepo = query({
-	args: { repo: v.string() },
+	args: {
+		repo: v.string(),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the read runs under that org's member scope, so a
+		// repo owned by another org (or the fleet) is refused as a member is
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: repoMappingDocOrNull,
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:getByRepo",
+		);
 		requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {
 			alsoRefusePreOrg: true,
 		});

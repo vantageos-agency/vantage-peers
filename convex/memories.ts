@@ -597,7 +597,14 @@ export const listMemories = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const softDeleteMemory = mutation({
-  args: { memoryId: v.string() },
+  args: {
+    memoryId: v.string(),
+    // S-28 expand: the organisation the MCP transport verified for a
+    // service-account bearer; the delete runs under that org's member scope, so
+    // only a memory of that org is reachable (convex/lib/verifiedOrg.ts).
+    // Absent = unchanged.
+    verifiedOrg: v.optional(verifiedOrgValidator),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:softDeleteMemory", …) at mcp-server/src/tools.ts:2075 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -605,7 +612,13 @@ export const softDeleteMemory = mutation({
     // refused identically for a live and for a deleted id (no existence oracle).
     // withOrgScope is called WITHOUT allowNoIdentityMaster: the MCP server
     // always presents a real Clerk identity on this path.
-    const scope = await withOrgScope(ctx);
+    const transportScope = await withOrgScope(ctx);
+    const scope = await resolveVerifiedOrgScope(
+      ctx,
+      transportScope,
+      args.verifiedOrg,
+      "memories:softDeleteMemory",
+    );
     const memoryId = requireId(
       ctx,
       "memories",
@@ -809,11 +822,22 @@ export const redactMemoryContent = mutation({
   args: {
     memoryId: v.id("memories"),
     redactions: redactionsValidator,
+    // S-28 expand: the organisation the MCP transport verified for a
+    // service-account bearer (convex/lib/verifiedOrg.ts). The door then answers
+    // as that org's member is answered: erasing needs a verified person or
+    // agent, which this session form does not carry. Absent = unchanged.
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: redactResultValidator,
   handler: async (ctx, args) => {
     // write-contract: MCP-transport (mcp-server/src/tools.ts erase_memory, imperative, Clerk-JWT bearers) and client-SDK; 0 dashboard hits for api.memories.redactMemoryContent (measured with grep -rn "redactMemoryContent" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}); never a subscribing render.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await resolveVerifiedOrgScope(
+      ctx,
+      transportScope,
+      args.verifiedOrg,
+      "memories:redactMemoryContent",
+    );
     return await redactAsCaller(ctx, scope, args, "memories:redactMemoryContent");
   },
 });

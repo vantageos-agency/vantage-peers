@@ -6,6 +6,11 @@ import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 import { withOrgScope } from "./lib/auth";
+import {
+	clientMemberScopeOfClaim,
+	requireNoClientOrgClaim,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
@@ -626,6 +631,12 @@ export const listErrors = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `errorLogs` is the fleet's own table: a claim naming a client
+		// organisation is answered as that organisation's member is, the typed
+		// empty list. Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -705,11 +716,17 @@ export const listErrors = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const clientClaim = await clientMemberScopeOfClaim(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"errorMonitor:listErrors",
+		);
 		const fleet = await requireFleetDoor(ctx, scope, "errorMonitor:listErrors", {
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});
-		if (!fleet) return [];
+		if (!fleet || clientClaim !== undefined) return [];
 
 		const limit = args.limit ?? 50;
 		const deployment = args.deployment;
@@ -736,7 +753,15 @@ export const listErrors = query({
 });
 
 export const getError = query({
-	args: { errorId: v.string() },
+	args: {
+		errorId: v.string(),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `errorLogs` is the fleet's own table: a claim naming a client
+		// organisation is refused as that organisation's member is (RBAC_DENIED
+		// not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("errorLogs"),
@@ -779,6 +804,7 @@ export const getError = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "errorMonitor:getError");
 		await requireFleetDoor(ctx, scope, "errorMonitor:getError", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,

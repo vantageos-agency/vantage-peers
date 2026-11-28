@@ -784,7 +784,13 @@ const missionsListArgsValidator = {
 };
 
 export const list = query({
-	args: missionsListArgsValidator,
+	args: {
+		...missionsListArgsValidator,
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the read runs under that org's member scope
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate — fail-closed default (SEC-AUDIT Day
@@ -795,7 +801,13 @@ export const list = query({
 		// narrows the signed-in-no-org branch to a typed-empty result (the
 		// pre-existing requireScope inside runMissionsList would otherwise
 		// throw for that same caller).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missions:list",
+		);
 		if (scope.refused) return [];
 		return await runMissionsList(ctx, args, scope);
 	},
@@ -1037,6 +1049,11 @@ export const updateStatus = mutation({
 	args: {
 		missionId: v.id("missions"),
 		status: missionStatusValidator,
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the write runs under that org's member scope, so
+		// the mission must be that org's and the door's human path then applies
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -1045,7 +1062,13 @@ export const updateStatus = mutation({
 		// `update` above) — updateStatus used to take NO caller-identity
 		// check of any kind. Resolved BEFORE ctx.db.get for the same
 		// existence-oracle reason documented on `update`.
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missions:updateStatus",
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${args.missionId} — ${JSON.stringify({ orgSlug: null })}`,

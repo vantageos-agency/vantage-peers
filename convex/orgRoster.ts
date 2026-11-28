@@ -1,4 +1,4 @@
-import { hasFleetRead, scopeStanding } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg, scopeStanding } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
@@ -11,6 +11,11 @@ import {
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+import {
+	resolveVerifiedOrgMapping,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import {
 	agentListedAsCoordinator,
 	agentListedOnRoster,
@@ -35,13 +40,24 @@ import {
 // doctrine, see convex/lib/auth.ts withOrgScope doc comment).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getMyOrgRoster = query({
-	args: {},
+	args: {
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the roster is then that org's own
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.array(v.string()),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// R-50: this is a PUBLIC query (reachable from any client, including a
 		// reactively-subscribed one) — refuseWithoutThrow narrows the
 		// signed-in-no-org branch to a typed-empty roster instead of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"orgRoster:getMyOrgRoster",
+		);
 		// The operator's own org admin is a read-only MASTER in a query
 		// (masterSource "operator-admin", `fleetWide`) but an ORDINARY MEMBER in
 		// tasks:create, which holds the real mapping roster. The picker must list
@@ -302,7 +318,13 @@ export const getMyAgentDirectory = query({
 // narrowed out (matching the #1318 `getScopeProfile` pattern).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getForAccessToken = query({
-	args: { tokenHash: v.string() },
+	args: {
+		tokenHash: v.string(),
+		// S-28 expand: the organisation the MCP transport verified for the bearer
+		// (convex/lib/verifiedOrg.ts). The token's organisation must be that one;
+		// another is refused RBAC_DENIED. Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.array(v.string()),
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
@@ -352,6 +374,20 @@ export const getForAccessToken = query({
 		if (!actingOrgAdmits(scope, mapping.clerkOrgId)) {
 			throw new ConvexError(
 				`RBAC_DENIED: orgRoster:getForAccessToken — the token's organisation is not the one this call acts for`,
+			);
+		}
+		const claimed = await resolveVerifiedOrgMapping(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"orgRoster:getForAccessToken",
+		);
+		if (
+			claimed !== undefined &&
+			!sameOrg({ id: mapping.clerkOrgId }, { id: claimed.clerkOrgId })
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgRoster:getForAccessToken — the token's organisation is not the verified organisation — ${JSON.stringify({ door: "orgRoster:getForAccessToken", reason: "token-outside-verified-org" })}`,
 			);
 		}
 		return mapping.allowedOrchestrators;

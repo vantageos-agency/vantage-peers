@@ -28,9 +28,11 @@ import {
 } from "./lib/actingPrincipal";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import {
+	assertRowInVerifiedOrg,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
+import type { VerifiedOrg } from "./lib/verifiedOrg";
 import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import {
@@ -82,9 +84,15 @@ const RECURRING_TASK_ID_HINT =
 // arguments (the same carriers as `tasks:update`). `callerOrchestrator` omitted =
 // the human path (or the fleet master); present = the agent path, decided on the
 // caller's actor ID derived from the credential / verifiedActor.
+//
+// S-28 expand: `verifiedOrg` rides beside them, the organisation the MCP
+// transport verified for a service-account bearer (convex/lib/verifiedOrg.ts).
+// Believed from the service account only; the door then reaches only rows of
+// that organisation (`assertScheduleInVerifiedOrg`). Absent = unchanged.
 const scheduleActorProofArgs = {
 	callerOrchestrator: v.optional(v.string()),
 	verifiedActor: v.optional(verifiedActorValidator),
+	verifiedOrg: v.optional(verifiedOrgValidator),
 };
 
 async function proveScheduleCaller(
@@ -92,13 +100,36 @@ async function proveScheduleCaller(
 	args: {
 		callerOrchestrator?: string;
 		verifiedActor?: VerifiedActor;
+		verifiedOrg?: VerifiedOrg;
 	},
+	door: string,
 ): Promise<CallerScope> {
 	return await requireAuthenticatedCaller(
 		ctx,
 		args.callerOrchestrator,
 		undefined,
 		args.verifiedActor,
+		undefined,
+		{ proof: args.verifiedOrg, door },
+	);
+}
+
+// The schedule must belong to the organisation the transport verified: the
+// service account is master-scoped, so the row's tenant gate does not narrow and
+// the verified org is the only thing that separates two organisations' rows.
+// No-op without a claim. Same helper the task doors use.
+async function assertScheduleInVerifiedOrg(
+	ctx: MutationCtx,
+	scope: CallerScope,
+	row: Doc<"recurringTasks">,
+	door: string,
+): Promise<void> {
+	await assertRowInVerifiedOrg(
+		ctx,
+		row,
+		scope.callerVerifiedOrg,
+		row._id,
+		door,
 	);
 }
 
@@ -357,6 +388,10 @@ export const list = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the read runs under that org's member scope
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// Fail-closed READ counterpart of this file's own WRITE gate. Measured
@@ -397,7 +432,13 @@ export const list = query({
 		//   grep -rn "api\.tasks\." --include=*.tsx app components hooks lib → no hit
 		// on this registration. So `alsoRefusePreOrg` is safe: no mounted render
 		// exists for that caller's throw to crash.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"recurringTasks:list",
+		);
 		requireResolvedCaller(scope, "recurringTasks:list", {
 			alsoRefusePreOrg: true,
 		});
@@ -519,7 +560,7 @@ export const update = mutation({
 		// AUTH_REQUIRED, never "Recurring task not found" — a get-then-scope
 		// order lets recurringTaskId existence act as an unauthenticated
 		// existence oracle.
-		const scope = await proveScheduleCaller(ctx, args);
+		const scope = await proveScheduleCaller(ctx, args, "recurringTasks:update");
 
 		const recurringTaskId = requireId(
 			ctx,
@@ -530,6 +571,7 @@ export const update = mutation({
 		);
 		const existing = await ctx.db.get(recurringTaskId);
 		if (!existing) throw new Error("Recurring task not found");
+		await assertScheduleInVerifiedOrg(ctx, scope, existing, "recurringTasks:update");
 
 		// TENANT GATE first. The roster check below is a NAME membership test and
 		// is not a tenant boundary: two organisations whose rosters both carry
@@ -691,7 +733,7 @@ export const pause = mutation({
 		// The ONLY gate on pause_recurring_task: the MCP tool decides nothing
 		// (task k170ahhzv5dsczsgsh20mr4fah8hfbk4). authorizeScheduleActor below
 		// serves the master, the creator or assignee agent BY ID, or a writer member.
-		const scope = await proveScheduleCaller(ctx, args);
+		const scope = await proveScheduleCaller(ctx, args, "recurringTasks:pause");
 		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		requireResolvedCaller(scope, "recurringTasks:pause", { alsoRefusePreOrg: true });
@@ -704,6 +746,7 @@ export const pause = mutation({
 		);
 		const row = await ctx.db.get(taskId);
 		if (!row) throw new Error("Recurring task not found");
+		await assertScheduleInVerifiedOrg(ctx, scope, row, "recurringTasks:pause");
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:pause", {
 			callerOrchestrator: args.callerOrchestrator,
 			verifiedActor: args.verifiedActor,
@@ -727,7 +770,7 @@ export const resume = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// The only gate is authorizeScheduleActor below — see pause above.
-		const scope = await proveScheduleCaller(ctx, args);
+		const scope = await proveScheduleCaller(ctx, args, "recurringTasks:resume");
 		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		requireResolvedCaller(scope, "recurringTasks:resume", { alsoRefusePreOrg: true });
@@ -740,6 +783,7 @@ export const resume = mutation({
 		);
 		const task = await ctx.db.get(taskId);
 		if (!task) throw new Error("Recurring task not found");
+		await assertScheduleInVerifiedOrg(ctx, scope, task, "recurringTasks:resume");
 		await authorizeScheduleActor(ctx, scope, task, "recurringTasks:resume", {
 			callerOrchestrator: args.callerOrchestrator,
 			verifiedActor: args.verifiedActor,
@@ -765,7 +809,7 @@ export const remove = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// The only gate is authorizeScheduleActor below — see pause above.
-		const scope = await proveScheduleCaller(ctx, args);
+		const scope = await proveScheduleCaller(ctx, args, "recurringTasks:remove");
 		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		requireResolvedCaller(scope, "recurringTasks:remove", { alsoRefusePreOrg: true });
@@ -778,6 +822,7 @@ export const remove = mutation({
 		);
 		const row = await ctx.db.get(taskId);
 		if (!row) throw new Error("Recurring task not found");
+		await assertScheduleInVerifiedOrg(ctx, scope, row, "recurringTasks:remove");
 		// Destructive: org:admin only.
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:remove", {
 			adminOnly: true,

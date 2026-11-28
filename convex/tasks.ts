@@ -1157,7 +1157,14 @@ export const createForWebhook = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { taskId: v.id("tasks") },
+	args: {
+		taskId: v.id("tasks"),
+		// The organisation the MCP transport verified for a service-account bearer
+		// (S-28 expand): the read runs under that org's member scope, so a task of
+		// another org answers null. Believed from the service account only
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("tasks"),
@@ -1263,7 +1270,14 @@ export const get = query({
 		// is a reactively-subscribed public read, so a signed-in caller with no
 		// organisation yet gets the same typed null as a denied one rather than a
 		// throw that would crash the subscriber's render (R-50/R-51).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// S-28 expand: claimless service-account read kept until the contract step that refuses it.
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:get",
+		);
 		if (!isRowVisibleToScope(scope, task)) return null;
 		return withDeliverableDivergence(task);
 	},
@@ -4799,13 +4813,23 @@ export const listByMission = query({
 		updatedSince: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the read runs under that org's member scope
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"tasks"> optionality
 	handler: async (ctx, args) => {
 		// Same mechanism as `list`: the verified scope, fail-closed. Anonymous /
 		// no-organisation callers get a typed-empty result; an org member is
 		// served only rows its own tenant stamped (filterByOrgScope below).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:listByMission",
+		);
 		if (scope.refused) return [];
 		if (!scope.isMaster && scope.orgSlug === null) return [];
 		const statuses = expandTaskStatuses(args.status);
@@ -6282,6 +6306,10 @@ export const billingSummaryByProject = query({
 		// When true, also return `noDurationTasks` (the done tasks that have a
 		// project but no measured duration), capped at BILLING_NO_DURATION_LIST_CAP.
 		listNoDuration: v.optional(v.boolean()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer; the summary runs under that org's member scope
+		// (convex/lib/verifiedOrg.ts). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		byProject: v.array(
@@ -6336,7 +6364,13 @@ export const billingSummaryByProject = query({
 		// door with no claim for the master bearer (mcp-server/src/tools.ts, kind
 		// "master"), so refusing the claimless service account would break it. It
 		// needs the MCP to forward a claim first (task k17er5a6yyccvxdh6gjcm5cand8fztkv).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:billingSummaryByProject",
+		);
 		const emptySummary = {
 			byProject: [],
 			unattributedTaskCount: 0,

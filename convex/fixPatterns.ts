@@ -13,7 +13,12 @@ import { resolveEraseCaller } from "./lib/eraseRow";
 import { performFixPatternErase } from "./lib/eraseFixPattern";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { isOrchestratorOnOrgRoster, type OrgScope } from "./lib/auth";
-import { resolveVerifiedOrgScope, verifiedOrgValidator } from "./lib/verifiedOrg";
+import {
+	clientMemberScopeOfClaim,
+	requireNoClientOrgClaim,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { rbacDenied } from "./lib/inboxReader";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireVerifiedActorPrincipal } from "./lib/actingPrincipal";
@@ -415,6 +420,11 @@ export const listByProject = query({
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // no-op for now — closes ArgumentValidationError from MCP wrapper (mcp-server/src/tools.ts) which always sends `fields`, mirroring the v2.4.12 fix already applied to fixPatterns:listAll.
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). A claim naming a
+		// client organisation is refused as that organisation's member is
+		// (RBAC_DENIED not-fleet-master). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -446,6 +456,7 @@ export const listByProject = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "fixPatterns:listByProject");
 		await requireFleetDoor(ctx, scope, "fixPatterns:listByProject", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -481,6 +492,11 @@ export const listAll = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). A claim naming a
+		// client organisation is answered as that organisation's member is, the
+		// typed empty list. Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -530,11 +546,17 @@ export const listAll = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const clientClaim = await clientMemberScopeOfClaim(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"fixPatterns:listAll",
+		);
 		const fleet = await requireFleetDoor(ctx, scope, "fixPatterns:listAll", {
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});
-		if (!fleet) return [];
+		if (!fleet || clientClaim !== undefined) return [];
 
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;

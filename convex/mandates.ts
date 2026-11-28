@@ -10,7 +10,12 @@ import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
 import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
 import { fleetOperatorRef, fleetOperatorSlug } from "./lib/operatorOrg";
-import { resolveVerifiedOrgMapping, verifiedOrgValidator } from "./lib/verifiedOrg";
+import {
+	clientMemberScopeOfClaim,
+	requireNoClientOrgClaim,
+	resolveVerifiedOrgMapping,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { sameOrg } from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -347,6 +352,12 @@ export const list = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). Mandates are the
+		// operator organisation's: a claim naming a client organisation is answered
+		// as that organisation's member is, the typed refusal envelope. Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	// A bare array is what the fleet master is served (rows, or a genuine
 	// absence). An ORDINARY member of an active org is served the typed refusal
@@ -419,10 +430,16 @@ export const list = query({
 		// The fleet master alone is served the bare array (rows, or a genuine
 		// absence with NO `refused` key).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const clientClaim = await clientMemberScopeOfClaim(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"mandates:list",
+		);
 		const fleet = await requireFleetDoor(ctx, scope, "mandates:list", {
 			operatorHumanMayRead: true,
 		});
-		if (!fleet) {
+		if (!fleet || clientClaim !== undefined) {
 			return { refused: true as const, items: [] };
 		}
 
@@ -502,7 +519,14 @@ export const list = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const get = query({
-	args: { mandateId: v.string() },
+	args: {
+		mandateId: v.string(),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). A claim naming a
+		// client organisation is refused as that organisation's member is
+		// (RBAC_DENIED not-fleet-master). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.union(mandateObject, v.null()),
 	handler: async (ctx, args) => {
 		// GATE — this read returned any mandate (budget, spending limits) to any
@@ -512,6 +536,7 @@ export const get = query({
 		// (grep "mandates\.get\b" dashboard app components hooks lib -> 0; MCP
 		// `get_mandate` one-shot), so a RAISE is safe.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "mandates:get");
 		await requireFleetDoor(ctx, scope, "mandates:get", {
 			masterOnly: true,
 			operatorHumanMayRead: true,

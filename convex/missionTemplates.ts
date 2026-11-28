@@ -274,13 +274,24 @@ export const upsert = mutation({
 		steps: v.array(stepValidator),
 		isDefault: v.optional(v.boolean()),
 		createdBy: creatorValidator,
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). The catalog is the
+		// fleet's: the claim makes the door answer as that organisation's member is
+		// (RBAC_DENIED, master-only). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("missionTemplates"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:upsert", …) at mcp-server/src/tools.ts:9109 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missionTemplates:upsert",
+		);
 		if (!scope.isMaster) {
 			throw new ConvexError(
 				"RBAC_DENIED: update_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
@@ -329,6 +340,9 @@ export const softDelete = mutation({
 	args: {
 		templateId: v.optional(v.id("missionTemplates")),
 		name: v.optional(v.string()),
+		// S-28 expand: see `upsert`. A claim is answered as that organisation's
+		// member is (RBAC_DENIED, master-only). Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -337,7 +351,13 @@ export const softDelete = mutation({
 		// above for the full rationale (shared, unscoped catalog write).
 		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on
 		// this same tool (soft_delete_mission_template).
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missionTemplates:softDelete",
+		);
 		if (!scope.isMaster) {
 			throw new ConvexError(
 				"RBAC_DENIED: soft-deleting a mission template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
@@ -487,6 +507,11 @@ export const instantiateTemplateIntoMission = mutation({
 		context: v.optional(v.record(v.string(), v.string())),
 		titlePrefix: v.optional(v.string()),
 		callerOrchestrator: v.optional(v.string()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). The door then runs
+		// as that organisation's member: the mission must be its own and every
+		// assignee on its roster. Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		taskIds: v.array(v.id("tasks")),
@@ -501,9 +526,18 @@ export const instantiateTemplateIntoMission = mutation({
 		// not found" — a get-then-scope order lets missionId existence act
 		// as an unauthenticated existence oracle.
 		const door = "missionTemplates:instantiateTemplateIntoMission";
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
 		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		const fleet = await hasFleetStanding(ctx, door);
+		// A claim makes the service account act for that organisation: no fleet
+		// standing, and no human writer role to judge (as `__actingOrg` does).
+		const fleet =
+			args.verifiedOrg === undefined && (await hasFleetStanding(ctx, door));
 
 		// 1. Fetch template
 		const template = liveOrNull(
@@ -542,7 +576,9 @@ export const instantiateTemplateIntoMission = mutation({
 			assigneeLabels.add(step.assignedTo ?? mission.pilot);
 		}
 		if (!fleet) {
-			await requireMemberWriterRole(ctx, scope, door);
+			if (args.verifiedOrg === undefined) {
+				await requireMemberWriterRole(ctx, scope, door);
+			}
 			if (args.callerOrchestrator !== undefined) {
 				await requireLabelOnScopeRoster(
 					ctx,

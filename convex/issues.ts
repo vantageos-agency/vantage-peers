@@ -10,6 +10,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { mappingIsProven } from "./githubOwnerBinding";
 import { withOrgScope } from "./lib/auth";
+import { requireNoClientOrgClaim, verifiedOrgValidator } from "./lib/verifiedOrg";
 import { appendCommit, normaliseCommitSha } from "./lib/commitSha";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
@@ -340,6 +341,12 @@ export const getByRepoNumber = query({
 	args: {
 		repo: v.string(),
 		issueNumber: v.number(),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `issues` is the
+		// fleet's own table: a claim naming a client organisation is refused as
+		// that organisation's member is (RBAC_DENIED not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// S-35: fleet-master-only door — no per-tenant rows; nothing to scope inside the read.
@@ -354,6 +361,7 @@ export const getByRepoNumber = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "issues:getByRepoNumber");
 		await requireFleetDoor(ctx, scope, "issues:getByRepoNumber", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -387,6 +395,12 @@ export const listByProject = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `issues` is the
+		// fleet's own table: a claim naming a client organisation is refused as
+		// that organisation's member is (RBAC_DENIED not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
@@ -400,6 +414,7 @@ export const listByProject = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "issues:listByProject");
 		await requireFleetDoor(ctx, scope, "issues:listByProject", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -452,6 +467,12 @@ export const listByOrchestrator = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `issues` is the
+		// fleet's own table: a claim naming a client organisation is refused as
+		// that organisation's member is (RBAC_DENIED not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// GATE — fleet master only, resolved BEFORE any row is read. `issues`
@@ -465,6 +486,7 @@ export const listByOrchestrator = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "issues:listByOrchestrator");
 		await requireFleetDoor(ctx, scope, "issues:listByOrchestrator", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -515,6 +537,12 @@ export const listByStatus = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `issues` is the
+		// fleet's own table: a claim naming a client organisation is refused as
+		// that organisation's member is (RBAC_DENIED not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(v.any()),
 	handler: async (ctx, args) => {
@@ -544,6 +572,7 @@ export const listByStatus = query({
 		// has no consumer to read it.
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "issues:listByStatus");
 		await requireFleetDoor(ctx, scope, "issues:listByStatus", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -575,6 +604,12 @@ export const listByStatus = query({
 export const getStats = query({
 	args: {
 		project: v.optional(v.string()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). `issues` is the
+		// fleet's own table: a claim naming a client organisation is refused as
+		// that organisation's member is (RBAC_DENIED not-fleet-master). Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		open: v.number(),
@@ -617,6 +652,7 @@ export const getStats = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated zero either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		await requireNoClientOrgClaim(ctx, scope, args.verifiedOrg, "issues:getStats");
 		// `masterOnly`: an ORDINARY member of an active org is resolved (so the
 		// anonymous / pre-org checks pass them) but is not the fleet master, and
 		// this table carries no orgId to scope a count to. They used to receive

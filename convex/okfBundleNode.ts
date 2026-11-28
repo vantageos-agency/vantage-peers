@@ -41,6 +41,7 @@ import {
 	requireResolvedCaller,
 	requireTenantNamespace,
 } from "./lib/auth";
+import { verifiedOrgValidator } from "./lib/verifiedOrg";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -235,6 +236,29 @@ export async function packTarball(
 // no DB dependency. Pure check against ctx.auth + Phase 1 namespace constant.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The caller's scope for an OKF door. Without a `verifiedOrg` claim, the plain
+// action bridge (unchanged). With one (S-28 expand: the organisation the MCP
+// transport verified for a service-account bearer), the ordinary member scope of
+// that ACTIVE organisation, through the KB bridge `resolveKbCallerScope`:
+// believed from the service account only, refused RBAC_DENIED from anyone else
+// or for an inactive org. It widens nothing.
+async function resolveOkfCallerScope(
+	ctx: Pick<ActionCtx, "auth" | "runQuery">,
+	verifiedOrg: { orgSlug: string; orgId?: string } | undefined,
+	door: string,
+) {
+	return verifiedOrg === undefined
+		? await ctx.runQuery(
+				internal.lib.auth.resolveOrgScopeForAction,
+				actionScopeArgs(ctx),
+			)
+		: await ctx.runQuery(internal.kbMutations.resolveKbCallerScope, {
+				...actionScopeArgs(ctx),
+				verifiedOrg,
+				door,
+			});
+}
+
 /**
  * Namespace authorization for OKF export/import.
  *
@@ -254,6 +278,7 @@ export async function assertCanExportNamespace(
 	ctx: Pick<ActionCtx, "auth" | "runQuery">,
 	namespace: string,
 	door: string,
+	verifiedOrg?: { orgSlug: string; orgId?: string },
 ): Promise<void> {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
@@ -277,10 +302,7 @@ export async function assertCanExportNamespace(
 	// fleet master (service account) is served any namespace; a member is served
 	// only `team/<resolvedOrgSlug>`; everything else, including the master
 	// namespace `project/elpi-corp`, is refused `RBAC_DENIED` naming the door.
-	const scope = await ctx.runQuery(
-		internal.lib.auth.resolveOrgScopeForAction,
-		actionScopeArgs(ctx),
-	);
+	const scope = await resolveOkfCallerScope(ctx, verifiedOrg, door);
 	requireTenantNamespace(scope, namespace, door);
 }
 
@@ -710,11 +732,25 @@ export const validateOkfBundle = action({
 	args: {
 		bundleUrl: v.optional(v.union(v.string(), v.null())),
 		storageId: v.optional(v.union(v.id("_storage"), v.null())),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). The storage ownership
+		// gate then runs as that organisation's member. Absent = unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args): Promise<ValidateOkfBundleResult> => {
 		// 0. Auth gate — fail-closed before touching storage or network
 		// (Eta BLOCKER1 PR #887: SSRF + cross-tenant peek vector).
 		await assertCanValidate(ctx);
+		// A presented claim is judged before any source is read, so a caller that
+		// may not present it is refused on the bundleUrl branch as well.
+		const claimedScope =
+			args.verifiedOrg === undefined
+				? undefined
+				: await resolveOkfCallerScope(
+						ctx,
+						args.verifiedOrg,
+						"okfBundleNode:validateOkfBundle",
+					);
 
 		// At least one source is required.
 		const url = args.bundleUrl ?? null;
@@ -747,10 +783,12 @@ export const validateOkfBundle = action({
 			// (grep -rn "validateOkfBundle" in vantage-peers-dashboard
 			// {app,components,hooks,lib,contexts,providers} -> 0 hits).
 			// The bundleUrl branch reads no VP data and keeps its SSRF gate only.
-			const scope = await ctx.runQuery(
-				internal.lib.auth.resolveOrgScopeForAction,
-				actionScopeArgs(ctx),
-			);
+			const scope =
+				claimedScope ??
+				(await ctx.runQuery(
+					internal.lib.auth.resolveOrgScopeForAction,
+					actionScopeArgs(ctx),
+				));
 			requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {
 				alsoRefusePreOrg: true,
 			});
@@ -868,6 +906,7 @@ export interface ImportOkfBundleResult {
 async function assertCanImport(
 	ctx: Pick<ActionCtx, "auth" | "runQuery">,
 	namespace: string,
+	verifiedOrg?: { orgSlug: string; orgId?: string },
 ): Promise<void> {
 	// Reuse the export-side guard semantics 1:1 — import has identical
 	// cross-tenant write risk (Eta REVISE iter-2 on #888 fail-closed pattern).
@@ -875,6 +914,7 @@ async function assertCanImport(
 		ctx,
 		namespace,
 		"okfBundleNode:importOkfBundle",
+		verifiedOrg,
 	);
 }
 
@@ -987,10 +1027,15 @@ export const importOkfBundle = action({
 			v.literal("replace"),
 		),
 		idempotencyKey: v.optional(v.string()),
+		// S-28 expand: the organisation the MCP transport verified for a
+		// service-account bearer (convex/lib/verifiedOrg.ts). The namespace and
+		// storage ownership gates then run as that organisation's member. Absent =
+		// unchanged.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args): Promise<ImportOkfBundleResult> => {
 		// 1. Auth — fail-closed cross-tenant guard.
-		await assertCanImport(ctx, args.targetNamespace);
+		await assertCanImport(ctx, args.targetNamespace, args.verifiedOrg);
 
 		// 2. Source resolution.
 		if (
@@ -1022,9 +1067,10 @@ export const importOkfBundle = action({
 			// `isolation-contract:` alsoRefusePreOrg — an action has no reactive
 			// subscriber (grep -rln "importOkfBundle" in vantage-peers-dashboard,
 			// excluding node_modules and .next -> 0 hits).
-			const scope = await ctx.runQuery(
-				internal.lib.auth.resolveOrgScopeForAction,
-				actionScopeArgs(ctx),
+			const scope = await resolveOkfCallerScope(
+				ctx,
+				args.verifiedOrg,
+				"okfBundleNode:importOkfBundle",
 			);
 			requireResolvedCaller(scope, "okfBundleNode:importOkfBundle", {
 				alsoRefusePreOrg: true,

@@ -14,6 +14,7 @@ import {
 	lookupOrgMapping,
 	type OrgMappingView,
 	type OrgScope,
+	requireResolvedCaller,
 	withOrgScope,
 } from "./auth";
 import { orgMappingLookups, orgRefOfRow } from "./authOrgMapping";
@@ -255,6 +256,74 @@ export async function resolveVerifiedOrgScope(
 		refuseWithoutThrow: true,
 		actForOrgMapping: mapping,
 	});
+}
+
+/**
+ * The ordinary-member scope a FLEET-ONLY door must answer a `verifiedOrg` claim
+ * with, or undefined when the door keeps its own answer.
+ *
+ * WHY. A fleet-only door (a read or write with no per-tenant rows: issues,
+ * mandates, fix patterns, the error log) decides "is the caller the fleet?" from
+ * the ctx identity (`requireFleetDoor`, `hasFleetStanding`), never from the scope
+ * it was handed, so `resolveVerifiedOrgScope` alone cannot narrow it: the service
+ * account stays the fleet whatever organisation it names. A claim naming a CLIENT
+ * organisation must be answered as that organisation's member is answered at this
+ * door, which for these doors is a refusal (or the typed empty value the door
+ * already gives a member).
+ *
+ * WHAT. Same trust rule as `resolveVerifiedOrgMapping` (service account only; the
+ * org must be mapped and active; the acting org must agree): no claim -> undefined.
+ * A claim naming the OPERATOR organisation -> undefined: the operator org's own
+ * seat is the fleet, as `mandates:validateSpending` already serves it. A claim
+ * naming any other organisation -> that organisation's ordinary member scope.
+ * It widens nothing.
+ */
+export async function clientMemberScopeOfClaim(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<OrgScope | undefined> {
+	const mapping = await resolveVerifiedOrgMapping(
+		ctx,
+		transportScope,
+		proof,
+		door,
+	);
+	if (mapping === undefined) return undefined;
+	if (sameOrg({ id: mapping.clerkOrgId }, await fleetOperatorRef(ctx.db))) {
+		return undefined;
+	}
+	if (transportScope.serviceTransport === true) return transportScope;
+	return await withOrgScope(ctx, {
+		refuseWithoutThrow: true,
+		actForOrgMapping: mapping,
+	});
+}
+
+/**
+ * A fleet-master-only door (`masterOnly`): a claim naming a client organisation is
+ * refused RBAC_DENIED `not-fleet-master`, the answer the door gives that
+ * organisation's member. No claim, or the operator organisation's claim: returns.
+ */
+export async function requireNoClientOrgClaim(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<void> {
+	const member = await clientMemberScopeOfClaim(
+		ctx,
+		transportScope,
+		proof,
+		door,
+	);
+	if (member !== undefined) {
+		requireResolvedCaller(member, door, {
+			masterOnly: true,
+			alsoRefusePreOrg: true,
+		});
+	}
 }
 
 /**
