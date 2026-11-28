@@ -179,3 +179,44 @@ for (const tool of Object.keys(DOORS) as ToolName[]) {
 		});
 	});
 }
+
+// ── get_tool_usage: a master seat reads its own usage with no argument ───────────────────
+//
+// The door reads a trusted call with no selfKey as an organisation admin, and with no caller
+// it has no target ("caller-unidentified"). masterSelfReadKey sends `selfKey: agent:<id>` on
+// exactly the call that is refused today, and nowhere it would end the admin reading.
+describe("get_tool_usage selfKey for a master bearer", () => {
+	it("master with a verified agent ID, no caller, no orgSlug: selfKey agent:<its ID>", async () => {
+		const r = await call("get_tool_usage", MASTER_AGENT);
+		expect(r.refused, r.text).toBe(false);
+		expect(r.doorCalls[0].args.selfKey).toBe(`agent:${OPS_AGENT}`);
+		expect(r.doorCalls[0].args).not.toHaveProperty("caller");
+	});
+	it("master naming a caller keeps the admin read: no selfKey, the caller is sent", async () => {
+		const r = await call("get_tool_usage", MASTER_AGENT, {
+			caller: `agent:${CLIO_ID}`,
+		});
+		expect(r.doorCalls[0].args).not.toHaveProperty("selfKey");
+		expect(r.doorCalls[0].args.caller).toBe(`agent:${CLIO_ID}`);
+	});
+	it("master naming an organisation: no selfKey (its agent is not in that organisation)", async () => {
+		const r = await call("get_tool_usage", MASTER_AGENT, { orgSlug: ORG });
+		expect(r.doorCalls[0].args).not.toHaveProperty("selfKey");
+	});
+	it("master with no agent ID: no selfKey, nothing true to send", async () => {
+		const r = await call("get_tool_usage", MASTER_PLAIN);
+		expect(r.doorCalls[0].args).not.toHaveProperty("selfKey");
+	});
+	it("get_owner_tool_usage from a master keeps no selfKey (the owner read stays an admin read)", async () => {
+		const r = await call("get_owner_tool_usage", MASTER_AGENT);
+		expect(r.doorCalls[0].args).not.toHaveProperty("selfKey");
+	});
+	it("a client seat keeps the selfKey it already sends (its own agent)", async () => {
+		const r = await call("get_tool_usage", CLIENT_SEAT);
+		expect(r.doorCalls[0].args.selfKey).toBe(`agent:${CLIO_ID}`);
+	});
+	it("a Clerk-JWT session sends no selfKey", async () => {
+		const r = await call("get_tool_usage", CLERK_SESSION);
+		expect(r.doorCalls[0].args).not.toHaveProperty("selfKey");
+	});
+});

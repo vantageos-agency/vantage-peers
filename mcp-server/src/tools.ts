@@ -209,7 +209,11 @@ import { registerUiAppResources, withUiAppLink } from "./ui-resources/apps.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { ERASE_ROW_TABLES } from "./eraseTables.js";
-import { recordToolUsage, toolUsageReadArgs } from "./toolUsage.js";
+import {
+	masterSelfReadKey,
+	recordToolUsage,
+	toolUsageReadArgs,
+} from "./toolUsage.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import {
@@ -12742,6 +12746,7 @@ export function registerTools(
 					{
 						...(caller !== undefined ? { caller } : {}),
 						...reader.args,
+						...masterSelfReadKey(oauthCtx, caller, orgSlug),
 					},
 				);
 				if (!Array.isArray(rows)) {

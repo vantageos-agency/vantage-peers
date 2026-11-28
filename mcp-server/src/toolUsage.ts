@@ -105,6 +105,34 @@ export async function recordToolUsage(
 }
 
 /**
+ * The key a MASTER bearer reads its OWN usage by (get_tool_usage with no `caller`).
+ *
+ * toolUsageReadArgs sends a master no `selfKey`: the door then reads the master as an
+ * organisation admin (convex/toolUsage.ts resolveReader: `admin` is a trusted call with
+ * no selfKey), which is what lets it read another caller or an owner. With no `caller`
+ * the door has no target either (`args.caller ?? reader.self`) and refuses the call
+ * `caller-unidentified`. A master holding a verified agent ID reads as that agent:
+ * `selfKey: agent:<id>`.
+ *
+ * Only on exactly that call, because the key ends the admin reading: `caller` named
+ * (the admin read of another caller), `orgSlug` named (the agent belongs to the operator
+ * organisation, not the named one), and get_owner_tool_usage keep what they send today.
+ * A master with no agent ID has nothing true to send.
+ */
+export function masterSelfReadKey(
+	oauthCtx: OAuthContext | undefined,
+	caller: string | undefined,
+	orgSlug: string | undefined,
+): { selfKey?: string } {
+	if (oauthCtx === undefined || !isMasterScope(oauthCtx)) return {};
+	if (oauthCtx.clerkJwt !== undefined) return {};
+	if (caller !== undefined || orgSlug !== undefined) return {};
+	const agentId = oauthCtx.actor?.agentId;
+	if (agentId === undefined || agentId === "") return {};
+	return { selfKey: `agent:${agentId}` };
+}
+
+/**
  * The identity facts a tool-usage READ hands the Convex door, from the verified
  * oauthContext only: the door's scope arguments (a person bearer's token proof,
  * the bearer's verified organisation), else the seat's agent key. A named
