@@ -44,6 +44,7 @@ import { stampOfNamespace } from "./lib/memoryTenant";
 import {
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
+	requireVerifiedOrgFromServiceAccount,
 } from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -513,7 +514,7 @@ export const generateUploadUrlWithTicket = mutation({
 		expiresAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
+		// write-contract: MCP transport and one dashboard consumer. The service account is admitted only carrying a verifiedOrg claim (a seat's org, DOOR_SCOPE "always"); a claimless service-account call is refused RBAC_DENIED, never served as master (S-28, a right is presented, never inferred). A Clerk-signed member needs no claim. Issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			await withOrgScope(ctx),
@@ -562,10 +563,16 @@ export const claimUpload = mutation({
 	},
 	returns: v.object({ storageId: v.id("_storage"), orgId: v.string() }),
 	handler: async (ctx, args) => {
-		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), and by components/settings/okf/okf-validate-panel.tsx (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
+		// write-contract: MCP transport and one dashboard consumer. The service account is admitted only carrying a verifiedOrg claim (a seat's org, DOOR_SCOPE "always"); a claimless service-account call is refused RBAC_DENIED, never served as master (S-28, a right is presented, never inferred). A Clerk-signed member needs no claim. Issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), and by components/settings/okf/okf-validate-panel.tsx (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
+		const transportScope = await withOrgScope(ctx);
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"kbMutations:claimUpload",
+		);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
-			await withOrgScope(ctx),
+			transportScope,
 			args.verifiedOrg,
 			"kbMutations:claimUpload",
 		);
@@ -614,9 +621,8 @@ export const claimUpload = mutation({
 			);
 
 		// The org the blob is bound to comes from the caller's VERIFIED scope; the
-		// ticket row only vouches for it (checked above). The fleet master resolves
-		// no org of its own (`orgSlug` null) and takes the org the ticket was
-		// issued for.
+		// ticket row only vouches for it (checked above). A service account reaches
+		// here only with a verifiedOrg, which resolves its scope's org.
 		const claimOrgId = scope.orgSlug ?? ticket.orgId;
 		const existing = await ctx.db
 			.query("kbUploads")

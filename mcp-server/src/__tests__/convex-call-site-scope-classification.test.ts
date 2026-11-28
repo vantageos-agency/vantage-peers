@@ -978,7 +978,7 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"kbIngest scopeArgs forwards verifiedOrg (tools/kbIngest.ts:264-266)",
+			"kbIngest scopeArgs forwards verifiedOrg (tools/kbIngest.ts:264-266); a master bearer resolving no organisation is refused AUTH_NO_ORG_ID before the door, and the door refuses a claimless service account RBAC_DENIED (convex/kbMutations.ts claimUpload)",
 	},
 	"export_okf_bundle|okfBundleNode:exportOkfBundle": {
 		class: "traced",
