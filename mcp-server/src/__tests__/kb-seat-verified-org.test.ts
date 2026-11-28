@@ -166,6 +166,15 @@ describe("pole 1: a seat acts on its verified org", () => {
 		expect(args).toMatchObject({ verifiedOrg: { orgSlug: "probe-tenant-a" } });
 	});
 
+	it("claim_upload refuses a master bearer that resolves no organisation, before the door", async () => {
+		const masterCtx = { ...base, isMaster: true } as OAuthContext;
+		const { tool, mutation } = setup(masterCtx);
+		await expect(
+			tool("claim_upload")({ storageId: "sid", ticket: "t" }),
+		).rejects.toThrow(/AUTH_NO_ORG_ID/);
+		expect(mutation).not.toHaveBeenCalled();
+	});
+
 	it("an agent credential's org is the verified org", async () => {
 		const ctx = {
 			...seatCtx(undefined),

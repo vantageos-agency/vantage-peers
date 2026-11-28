@@ -425,6 +425,7 @@ describe("kbIngest.ts: the master is refused before the door where it would be s
 		{ tool: "soft_delete_document", args: { docId: "d" } },
 		{ tool: "generate_upload_url", args: {} },
 		{ tool: "generate_upload_url", args: { sha256: "a".repeat(64) } },
+		{ tool: "claim_upload", args: { storageId: "sid", ticket: "t" } },
 	];
 	for (const s of SITES_KB) {
 		it(`${s.tool}(${Object.keys(s.args).join(",")}): AUTH_NO_ORG_ID, no door call`, async () => {
@@ -436,17 +437,6 @@ describe("kbIngest.ts: the master is refused before the door where it would be s
 			expect(k.mutation).not.toHaveBeenCalled();
 		});
 	}
-	it("claim_upload keeps the master path it has today: the door is called, claimless", async () => {
-		const k = kbSetup(MASTER);
-		await k.handlers.get("claim_upload")?.({ storageId: "sid", ticket: "t" });
-		expect(k.mutation).toHaveBeenCalledTimes(1);
-		const [door, args] = k.mutation.mock.calls[0] as [
-			string,
-			Record<string, unknown>,
-		];
-		expect(door).toBe("kbMutations:claimUpload");
-		expect(args).not.toHaveProperty("verifiedOrg");
-	});
 });
 
 // ── 1b. the other ui:// primitives: the agent ID reaches memories:listMemories only ──
