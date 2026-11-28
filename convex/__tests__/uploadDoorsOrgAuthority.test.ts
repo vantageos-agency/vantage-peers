@@ -6,7 +6,8 @@
 //   another org            REFUSED (RBAC_DENIED / AUTH_UPLOAD_TICKET_NOT_YOURS)
 //   the same org           SERVED
 //   an inactive org        REFUSED (withOrgScope refuses an inactive mapping)
-//   the fleet service acct SERVED (master by subject, any org)
+//   the fleet service acct SERVED when it carries a verifiedOrg, REFUSED claimless
+//                          (claimUpload only; S-28, claimUploadContract.test.ts)
 
 import { createHash } from "node:crypto";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
@@ -164,12 +165,18 @@ describe("claimUpload — who may claim", () => {
 		expect(bound).toEqual([]);
 	});
 
-	test("PRESENT — the fleet service account claims a ticket issued to any org, bound to that org", async () => {
+	test("REFUSED — the fleet service account claiming claimless (no verifiedOrg); ticket stays unclaimed", async () => {
 		const t = createT();
 		await seedOrg(t, "org-A");
 		const { ticket } = await generate(asOrg(t, "org-A"), "org-A");
 		const storageId = await upload(t);
-		const r = await asService(t).mutation(CLAIM, { storageId, ticket });
-		expect(r).toEqual({ storageId, orgId: "org-A" });
+		await expect(
+			asService(t).mutation(CLAIM, { storageId, ticket }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		const bound = await t.run(async (ctx) =>
+			ctx.db.query("kbUploads").collect(),
+		);
+		expect(bound).toEqual([]);
 	});
+
 });
