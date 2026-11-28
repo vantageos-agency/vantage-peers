@@ -1,6 +1,7 @@
 import {
 	isFleetStamp,
 	isServiceAccountScope,
+	passesScopeFilter,
 	resolveOrgFromClaim,
 	sameOrg,
 } from "@vantageos/cloud-identity";
@@ -63,6 +64,38 @@ export const verifiedOrgValidator = v.object({
 });
 
 export type VerifiedOrg = { orgSlug: string; orgId?: string };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// presentedRoster — the roster of a non-master bearer the MCP transport could
+// resolve NO organisation for (S-35, task k17edzy4wpq0ng4cbytgj8ev6n8k0hsd).
+// The MCP forwards its own after-read filter's roster (oauthContext.fromAllowList)
+// so the door decides inside the read with the SAME predicate, the package's
+// `passesScopeFilter` (a "*" entry is that filter's deprecated master signal and
+// passes there, so it passes here). Believed from the service-account transport
+// only, and only when no organisation was verified: a verified org decides by
+// its own roster, and any other caller's presented roster is ignored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const presentedRosterValidator = v.optional(v.array(v.string()));
+
+/**
+ * Whether a presented roster admits `row` (a row with a `createdBy` and no
+ * namespace). True when the roster does not apply: a verified org was carried,
+ * no roster was presented, or the caller is not the service-account transport.
+ */
+export function presentedRosterAdmits(
+	transportScope: OrgScope,
+	verifiedOrg: VerifiedOrg | undefined,
+	presented: string[] | undefined,
+	row: Parameters<typeof passesScopeFilter>[1],
+): boolean {
+	if (verifiedOrg !== undefined || presented === undefined) return true;
+	if (!isServiceTransport(transportScope)) return true;
+	return passesScopeFilter(
+		{ fromAllowList: presented, namespaceReadPrefixes: [] },
+		row,
+	);
+}
 
 function refuse(reason: string, door: string, detail: string): never {
 	throw new ConvexError(

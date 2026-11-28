@@ -1,5 +1,5 @@
 import { requireProject } from "./lib/taskProject";
-import { passesScopeFilter, sameOrg } from "@vantageos/cloud-identity";
+import { sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -11,11 +11,15 @@ import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
 import {
 	isOrchestratorOnOrgRoster,
-	isServiceTransport,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
-import { resolveVerifiedOrgScope, verifiedOrgValidator } from "./lib/verifiedOrg";
+import {
+	presentedRosterAdmits,
+	presentedRosterValidator,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { taskActorIdFields } from "./lib/actorIds";
 import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
@@ -135,7 +139,7 @@ export const getByName = query({
 		// after-read `scopeFilterGet` applies (a "*" entry is its deprecated master
 		// signal, so it passes, as it does in the MCP). Believed from the service account only and
 		// ignored from anyone else; `verifiedOrg` wins when both are carried.
-		callerRoster: v.optional(v.array(v.string())),
+		callerRoster: presentedRosterValidator,
 	},
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
@@ -167,12 +171,12 @@ export const getByName = query({
 		}
 		// A presented roster counts for the service-account transport only, and only
 		// when no organisation was verified (the verified org's roster decided above).
+		// The decision is the package's predicate, in convex/lib/verifiedOrg.ts.
 		if (
-			args.verifiedOrg === undefined &&
-			args.callerRoster !== undefined &&
-			isServiceTransport(transportScope) &&
-			!passesScopeFilter(
-				{ fromAllowList: args.callerRoster, namespaceReadPrefixes: [] },
+			!presentedRosterAdmits(
+				transportScope,
+				args.verifiedOrg,
+				args.callerRoster,
 				template,
 			)
 		) {
