@@ -42,7 +42,7 @@ describe("ui:// door arguments: the verified claim is set last", () => {
 });
 
 describe("ui:// door claim: a denied resolution is refused, never claimless", () => {
-	it("throws RBAC_DENIED door-scope-denied, and no argument set is produced", async () => {
+	it("the builder yields no argument set, and the read refuses RBAC_DENIED with no door call", async () => {
 		vi.resetModules();
 		vi.doMock("../src/doorScope.js", async (orig) => {
 			const real = (await orig()) as Record<string, unknown>;
@@ -51,22 +51,38 @@ describe("ui:// door claim: a denied resolution is refused, never claimless", ()
 				resolveDoorScope: () => ({ denied: "seat refused (test)" }),
 			};
 		});
-		const { uiResourceDoorArgs, uiResourceDoorClaim } = await import(
-			"../src/ui-resources/register.js"
-		);
-		let thrown: unknown;
+		const reg = await import("../src/ui-resources/register.js");
+		const sdk = await import("@modelcontextprotocol/server");
+		const { Client } = await import("@modelcontextprotocol/client");
+		expect(reg.uiResourceDoorClaim(MEMBER, "tasks:list")).toBeNull();
+		expect(reg.uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 })).toBeNull();
+
+		const calls: string[] = [];
+		const fake = {
+			query: async (name: string) => {
+				calls.push(name);
+				return [];
+			},
+		} as unknown as import("../src/ui-resources/register.js").UiResourceConvexClient;
+		const server = new sdk.McpServer({ name: "t", version: "0.0.0" });
+		reg.registerUiResources(server, fake, MEMBER, {
+			master: false,
+			callerIdentities: MEMBER.fromAllowList,
+		});
+		const [ct, st] = sdk.InMemoryTransport.createLinkedPair();
+		const client = new Client({ name: "c", version: "0.0.0" });
+		await Promise.all([server.connect(st), client.connect(ct)]);
+		let seen = "";
 		try {
-			uiResourceDoorClaim(MEMBER, "tasks:list");
-		} catch (e) {
-			thrown = e;
+			const r = await client.readResource({ uri: "ui://vp/v1/tasks-table" });
+			seen = JSON.stringify(r);
+		} catch (err) {
+			seen = `${String((err as Error)?.message)} ${JSON.stringify((err as { data?: unknown }).data ?? {})}`;
+		} finally {
+			await client.close();
 		}
-		expect(String((thrown as Error)?.message)).toContain("RBAC_DENIED");
-		const data = (thrown as { data?: { code?: string; reason?: string } }).data;
-		expect(data?.code).toBe("RBAC_DENIED");
-		expect(data?.reason).toBe("door-scope-denied");
-		expect(() =>
-			uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 }),
-		).toThrow(/RBAC_DENIED/);
+		expect(calls).toEqual([]);
+		expect(seen).toContain("RBAC_DENIED");
 		vi.doUnmock("../src/doorScope.js");
 		vi.resetModules();
 	});
