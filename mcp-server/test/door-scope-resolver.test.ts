@@ -321,6 +321,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["store_memory", "memories:storeMemory", personOnly, true],
 	["store_episode", "episodes:storeEpisode", personOnly, true],
 	["create_briefing_note", "briefingNotes:create", personElseOrg, true],
+	["update_briefing_note", "briefingNotes:update", org, false],
 	["get_briefing_note", "briefingNotes:get", org, false],
 	["list_briefing_notes", "briefingNotes:list", org, false],
 	// task k176723g3m5cczsq44ak9fbgm58hd0tx: the diary doors take verifiedOrg

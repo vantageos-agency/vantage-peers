@@ -8576,6 +8576,7 @@ export function registerTools(
 					decisions,
 					linkedMemoryIds: linkedMemoryIds as any,
 					...actorClaim(),
+					...doorScopeArgs("briefingNotes:update", callerOrchestrator),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
