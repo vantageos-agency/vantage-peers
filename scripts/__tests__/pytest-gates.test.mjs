@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -22,6 +23,11 @@ import { describe, expect, it } from "vitest";
  *
  * Fail-closed: no python3, no pytest, or a spawn error FAILS the test. A gate that cannot run is red.
  * Paths are derived from this file's location, never from the cwd.
+ *
+ * Each pytest run gets its own --basetemp under a fresh mkdtemp directory, removed on every exit
+ * path (finally). Without it pytest keeps up to three pytest-N directories per user in
+ * /tmp/pytest-of-<user>, and on a host whose /tmp is shared every vitest run regrows them
+ * (task k177e26wnwncq0v8tp6eyssqwd8k28ws: /tmp at 88% on fab-vp).
  */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -32,12 +38,26 @@ function pytest(targets) {
 			`${t} not found; the pytest gate cannot run.`,
 		).toBe(true);
 	}
-	const result = spawnSync("python3", ["-m", "pytest", "-q", ...targets], {
-		cwd: repoRoot,
-		encoding: "utf8",
-		maxBuffer: 64 * 1024 * 1024,
-		timeout: 240_000,
-	});
+	const baseTemp = mkdtempSync(join(tmpdir(), "vp-pytest-gates-"));
+	let result;
+	try {
+		result = spawnSync(
+			"python3",
+			["-m", "pytest", "-q", `--basetemp=${join(baseTemp, "t")}`, ...targets],
+			{
+				cwd: repoRoot,
+				encoding: "utf8",
+				maxBuffer: 64 * 1024 * 1024,
+				timeout: 240_000,
+			},
+		);
+	} finally {
+		rmSync(baseTemp, { recursive: true, force: true });
+	}
+	expect(
+		existsSync(baseTemp),
+		`${baseTemp} survived the run; the per-run pytest basetemp must be removed.`,
+	).toBe(false);
 	if (result.error) {
 		throw new Error(
 			`python3 -m pytest could not be spawned: ${result.error.message}`,
