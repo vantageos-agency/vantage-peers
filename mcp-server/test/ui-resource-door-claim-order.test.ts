@@ -55,7 +55,9 @@ describe("ui:// door claim: a denied resolution is refused, never claimless", ()
 		const sdk = await import("@modelcontextprotocol/server");
 		const { Client } = await import("@modelcontextprotocol/client");
 		expect(reg.uiResourceDoorClaim(MEMBER, "tasks:list")).toBeNull();
-		expect(reg.uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 })).toBeNull();
+		expect(
+			reg.uiResourceDoorArgs(MEMBER, "tasks:list", { limit: 5 }),
+		).toBeNull();
 
 		const calls: string[] = [];
 		const fake = {
